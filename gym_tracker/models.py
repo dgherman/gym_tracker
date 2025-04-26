@@ -22,6 +22,6 @@ class Session(Base):
     purchase_id = Column(Integer, ForeignKey("purchases.id"), nullable=False)
     session_date = Column(DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP'))
     duration_minutes = Column(Integer, nullable=False)
-    trainer = Column(String, nullable=False)
+    trainer = Column(String(255), nullable=False)
 
     purchase = relationship("Purchase", back_populates="sessions")
