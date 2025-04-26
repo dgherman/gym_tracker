@@ -1,4 +1,3 @@
-# File: main.py
 from typing import List
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
