@@ -1,0 +1,15 @@
+# Web framework
+fastapi>=0.95.0
+
+# ASGI server
+uvicorn[standard]>=0.22.0
+
+# ORM & database drivers
+SQLAlchemy>=1.4.0
+pymysql>=1.0.2
+
+# Data validation
+pydantic>=1.9.0
+
+# Testing
+pytest>=7.0.0
