@@ -33,12 +33,12 @@ def serve_frontend():
     <div id="summary" class="mb-4">Loading summary...</div>
     <div class="mb-4">
       <div class="d-flex mb-2">
-        <button id="log30" class="btn btn-primary me-2">Log 30-min Session</button>
-        <button id="log45" class="btn btn-secondary">Log 45-min Session</button>
+        <button id="log30" class="btn btn-success me-2">Log 30-min Session</button>
+        <button id="log45" class="btn btn-success">Log 45-min Session</button>
       </div>
       <div class="d-flex mb-2">
-        <button id="buy30" class="btn btn-success me-2">Buy 30-min Package</button>
-        <button id="buy45" class="btn btn-success">Buy 45-min Package</button>
+        <button id="buy30" class="btn btn-warning me-2">Buy 30-min Package</button>
+        <button id="buy45" class="btn btn-warning">Buy 45-min Package</button>
       </div>
       <div class="mb-2">
         <a href="/history" class="btn btn-info">View History</a>
@@ -78,7 +78,7 @@ def serve_frontend():
       const data = await res.json();
       document.getElementById('summary').innerHTML = Object.entries(data)
         .map(([d, r]) =>
-          `<div class="alert ${r === 0 ? 'alert-danger' : 'alert-success'}">
+          `<div class="alert ${r === 0 ? 'alert-danger' : 'alert-info'}">
              Duration ${d} min: ${r} left
            </div>`
         ).join('');
