@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Gym Tracker History</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <style>
+    .action-btn { min-width: 3.5rem; text-align: center; }
+  </style>
+</head>
+<body class="bg-light p-4">
+
+  <nav class="navbar navbar-light mb-4">
+    <a class="navbar-brand" href="/">Gym Tracker</a>
+  </nav>
+
+  <h1 class="mb-4">History</h1>
+
+  <!-- Date-range tabs -->
+  <div class="btn-group mb-4" role="group" id="rangeButtons">
+    <button class="btn btn-outline-primary" data-range="current_month">Current Month</button>
+    <button class="btn btn-outline-primary" data-range="last_6_months">Last 6 Months</button>
+    <button class="btn btn-outline-primary" data-range="last_12_months">Last 12 Months</button>
+    <button class="btn btn-outline-primary" data-range="current_year">Current Year</button>
+  </div>
+
+  <!-- Where alerts and history content appear -->
+  <div id="history-content"></div>
+
+  <a href="/" class="btn btn-secondary mt-4">Back</a>
+
+  <!-- Edit Session Modal -->
+  <div class="modal fade" id="editSessionModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <form id="editSessionForm" onsubmit="submitSessionEdit(event)">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Edit Session</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <input type="hidden" id="sessionId" />
+            <div class="mb-3">
+              <label for="sessionDate" class="form-label">Date & Time</label>
+              <input type="datetime-local" id="sessionDate" class="form-control" required />
+            </div>
+            <div class="mb-3">
+              <label for="sessionDuration" class="form-label">Duration</label>
+              <select id="sessionDuration" class="form-select">
+                <option value="30">30 min</option>
+                <option value="45">45 min</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label for="sessionTrainer" class="form-label">Trainer</label>
+              <select id="sessionTrainer" class="form-select">
+                <option>Rachel</option>
+                <option>Lindsay</option>
+              </select>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="submit" class="btn btn-primary">Save</button>
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    const buttons = document.querySelectorAll('#rangeButtons button');
+    let currentRange = 'current_month';
+
+    buttons.forEach(btn => btn.addEventListener('click', () => {
+      buttons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentRange = btn.dataset.range;
+      loadHistory(currentRange);
+    }));
+
+    window.addEventListener('DOMContentLoaded', () => {
+      buttons[0].classList.add('active');
+      loadHistory(currentRange);
+    });
+
+    function getDates(range) {
+      const now = new Date(), start = new Date();
+      switch (range) {
+        case 'current_month': start.setDate(1); break;
+        case 'last_6_months': start.setMonth(now.getMonth()-5,1); break;
+        case 'last_12_months': start.setFullYear(now.getFullYear()-1, now.getMonth(),1); break;
+        case 'current_year': start.setMonth(0,1); break;
+      }
+      return { start: start.toISOString(), end: now.toISOString() };
+    }
+
+    function parseUTC(s) {
+      const d = new Date(s);
+      return new Date(d.getTime() + d.getTimezoneOffset()*60000);
+    }
+
+    function formatDT(dt) {
+      return dt.toLocaleString(undefined, {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: 'numeric', minute: '2-digit'
+      });
+    }
+
+    function showAlert(message, type='info') {
+      const alertHTML = 
+        `<div class="alert alert-${type} alert-dismissible fade show" role="alert">${message}` +
+        `<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>`;
+      document.getElementById('history-content').insertAdjacentHTML('afterbegin', alertHTML);
+    }
+
+    async function loadHistory(range) {
+      const { start, end } = getDates(range);
+      const [sRes, pRes] = await Promise.all([
+        fetch(`/history/sessions/?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
+        fetch(`/history/purchases/?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`)
+      ]);
+      const sessions  = await sRes.json();
+      const purchases = await pRes.json();
+
+      let html = '<h2>Sessions</h2><ul class="list-group mb-4">';
+      if (sessions.length) {
+        sessions.forEach(s => {
+          const dt = parseUTC(s.session_date);
+          html += 
+            `<li class="list-group-item d-flex justify-content-between align-items-center small" id="session-card-${s.id}">` +
+            `<span class="flex-grow-1 text-wrap">${formatDT(dt)} — ${s.duration_minutes} min with ${s.trainer}</span>` +
+            `<span class="d-flex gap-1">` +
+            `<button class="btn btn-sm btn-outline-primary action-btn py-0 px-2" data-bs-toggle="modal" data-bs-target="#editSessionModal"` +
+              `data-id="${s.id}" data-date="${s.session_date.slice(0,16)}" data-duration="${s.duration_minutes}" data-trainer="${s.trainer}">Edit</button>` +
+            `<button class="btn btn-sm btn-outline-danger action-btn py-0 px-2" onclick="confirmDelete('session', ${s.id})">Delete</button>` +
+            `</span></li>`;
+        });
+      } else {
+        html += '<li class="list-group-item small text-muted">No sessions for this range.</li>';
+      }
+      html += '</ul>';
+
+      html += '<h2>Purchases</h2><ul class="list-group">';
+      if (purchases.length) {
+        purchases.forEach(p => {
+          const dt = parseUTC(p.purchase_date);
+          html += 
+            `<li class="list-group-item d-flex justify-content-between align-items-center small" id="purchase-card-${p.id}">` +
+            `<span class="flex-grow-1 text-wrap">${p.total_sessions}-session pack (${p.duration_minutes}-min) — ${formatDT(dt)} <small>(${p.sessions_remaining} left)</small></span>` +
+            `<span>` +
+            `<button class="btn btn-sm btn-outline-danger action-btn py-0 px-2" onclick="confirmDelete('purchase', ${p.id})">Delete</button>` +
+            `</span></li>`;
+        });
+      } else {
+        html += '<li class="list-group-item small text-muted">No purchases for this range.</li>';
+      }
+      html += '</ul>';
+
+      document.getElementById('history-content').innerHTML = html;
+    }
+
+    function confirmDelete(type, id) {
+      if (!confirm(`Are you sure you want to delete this ${type}?`)) return;
+      const url = type === 'session'
+        ? `/history/api/delete/session/${id}`
+        : `/history/api/delete/purchase/${id}`;
+      fetch(url, { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+          if (d.success) {
+            showAlert(`${type.charAt(0).toUpperCase() + type.slice(1)} deleted.`, 'warning');
+            setTimeout(() => loadHistory(currentRange), 1500);
+          } else {
+            showAlert(`Failed to delete ${type}.`, 'danger');
+          }
+        });
+    }
+
+    document.getElementById('editSessionModal').addEventListener('show.bs.modal', e => {
+      const btn = e.relatedTarget;
+      document.getElementById('sessionId').value       = btn.dataset.id;
+      document.getElementById('sessionDate').value     = btn.dataset.date;
+      document.getElementById('sessionDuration').value = btn.dataset.duration;
+      document.getElementById('sessionTrainer').value  = btn.dataset.trainer;
+    });
+
+    function submitSessionEdit(evt) {
+      evt.preventDefault();
+      const id = document.getElementById('sessionId').value;
+      const payload = {
+        session_date: document.getElementById('sessionDate').value,
+        duration_minutes: +document.getElementById('sessionDuration').value,
+        trainer: document.getElementById('sessionTrainer').value
+      };
+      fetch(`/history/api/edit/session/${id}`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+      })
+      .then(r => r.json())
+      .then(d => {
+        if (d.success) {
+          showAlert('Session updated.', 'success');
+          bootstrap.Modal.getInstance(document.getElementById('editSessionModal')).hide();
+          setTimeout(() => loadHistory(currentRange), 1500);
+        } else {
+          showAlert('Failed to update session.', 'danger');
+        }
+      });
+    }
+  </script>
+</body>
+</html>

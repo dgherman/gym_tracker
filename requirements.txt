@@ -1,5 +1,6 @@
 # Web framework
 fastapi>=0.95.0
+jinja2
 
 # ASGI server
 uvicorn[standard]>=0.22.0

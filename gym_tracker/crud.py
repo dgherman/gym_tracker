@@ -5,12 +5,16 @@ from sqlalchemy import func
 from gym_tracker import models, schemas
 
 def create_purchase(db: Session, purchase_in: schemas.PurchaseCreate):
+    """
+    Create a new purchase package:
+      - duration_minutes comes from the schema (30 or 45)
+      - total_sessions and sessions_remaining are always 10
+    """
     db_purchase = models.Purchase(
-        duration_minutes=purchase_in.duration_minutes,
-        total_sessions=10,
-        sessions_remaining=10,
-        # set UTC now explicitly
-        purchase_date=datetime.now(timezone.utc)
+        duration_minutes   = purchase_in.duration_minutes,
+        total_sessions     = 10,
+        sessions_remaining = 10,
+        purchase_date      = datetime.now(timezone.utc)
     )
     db.add(db_purchase)
     db.commit()

@@ -1,13 +1,18 @@
-from typing import List
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse
-from sqlalchemy.orm import Session
+from fastapi.templating import Jinja2Templates
+from pathlib import Path
+from typing import List, Optional
 from datetime import datetime
-from gym_tracker import crud, schemas, models
-from gym_tracker.database import engine, SessionLocal
+from sqlalchemy.orm import Session
 
+from gym_tracker import crud, models, schemas
+from gym_tracker.database import SessionLocal, engine
+
+# ------------------------------------------------------------------
+# Database initialization
+# ------------------------------------------------------------------
 models.Base.metadata.create_all(bind=engine)
-app = FastAPI(title="Gym Session Tracker")
 
 def get_db():
     db = SessionLocal()
@@ -16,213 +21,163 @@ def get_db():
     finally:
         db.close()
 
+# ------------------------------------------------------------------
+# FastAPI app and templates
+# ------------------------------------------------------------------
+app = FastAPI()
+templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+# ------------------------------------------------------------------
+# Root landing page (renders templates/index.html)
+# ------------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
-def serve_frontend():
-    return HTMLResponse(r"""
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Gym Session Tracker</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body class="bg-light">
-  <div class="container py-4">
-    <h1 class="mb-4">Gym Session Tracker</h1>
-    <div id="summary" class="mb-4">Loading summary...</div>
-    <div class="mb-4">
-      <div class="d-flex mb-2">
-        <button id="log30" class="btn btn-success me-2">Log 30-min Session</button>
-        <button id="log45" class="btn btn-success">Log 45-min Session</button>
-      </div>
-      <div class="d-flex mb-2">
-        <button id="buy30" class="btn btn-warning me-2">Buy 30-min Package</button>
-        <button id="buy45" class="btn btn-warning">Buy 45-min Package</button>
-      </div>
-      <div class="mb-2">
-        <a href="/history" class="btn btn-info">View History</a>
-      </div>
-    </div>
-    <div id="notification"></div>
-  </div>
+def home(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse("index.html", {"request": request})
 
-  <div class="modal fade" id="trainerModal" tabindex="-1" aria-labelledby="trainerModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title">Select Trainer</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body">
-          <select id="modalTrainerSelect" class="form-select">
-            <option>Rachel</option>
-            <option>Lindsay</option>
-          </select>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="button" id="confirmTrainer" class="btn btn-primary">Log Session</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-  <script>
-    let pendingDuration = null;
-    const trainerModal = new bootstrap.Modal(document.getElementById('trainerModal'));
-
-    async function refreshSummary() {
-      const res = await fetch('/summary/');
-      const data = await res.json();
-      document.getElementById('summary').innerHTML = Object.entries(data)
-        .map(([d, r]) =>
-          `<div class="alert ${r === 0 ? 'alert-danger' : 'alert-info'}">
-             Duration ${d} min: ${r} left
-           </div>`
-        ).join('');
-    }
-
-    function promptTrainer(d) {
-      pendingDuration = d;
-      trainerModal.show();
-    }
-
-    document.getElementById('confirmTrainer').addEventListener('click', async () => {
-      const trainer = document.getElementById('modalTrainerSelect').value;
-      trainerModal.hide();
-      const res = await fetch('/sessions/', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({duration_minutes: pendingDuration, trainer})
-      });
-      const notif = document.getElementById('notification');
-      if (res.ok) {
-        const s = await res.json();
-        notif.innerHTML = `<div class="alert alert-info">
-          Logged ${s.duration_minutes}-min with ${s.trainer}.${s.purchase_exhausted ? ' Purchase exhausted!' : ''}
-        </div>`;
-      } else {
-        const e = await res.json();
-        notif.innerHTML = `<div class="alert alert-warning">${e.detail}</div>`;
-      }
-      refreshSummary();
-    });
-
-    document.addEventListener('DOMContentLoaded', () => {
-      document.getElementById('log30').addEventListener('click', () => promptTrainer(30));
-      document.getElementById('log45').addEventListener('click', () => promptTrainer(45));
-      document.getElementById('buy30').addEventListener('click', () => buyPackage(30));
-      document.getElementById('buy45').addEventListener('click', () => buyPackage(45));
-      refreshSummary();
-    });
-
-    async function buyPackage(d) {
-      const res = await fetch('/purchases/', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({duration_minutes: d})
-      });
-      const notif = document.getElementById('notification');
-      if (res.ok) {
-        const p = await res.json();
-        notif.innerHTML = `<div class="alert alert-success">
-          Purchased ${p.duration_minutes}-min package.
-        </div>`;
-      } else {
-        const e = await res.json();
-        notif.innerHTML = `<div class="alert alert-danger">Error: ${e.detail}</div>`;
-      }
-      refreshSummary();
-    }
-  </script>
-</body>
-</html>
-""")
-
-@app.get("/summary/", response_model=dict)
-def read_summary(db: Session = Depends(get_db)):
+# ------------------------------------------------------------------
+# Summary endpoint
+# ------------------------------------------------------------------
+@app.get("/summary/")
+def summary(db: Session = Depends(get_db)):
+    # Return the raw dict from crud.get_summary:
     return crud.get_summary(db)
 
-@app.post("/purchases/", response_model=schemas.Purchase)
-def create_purchase(purchase: schemas.PurchaseCreate, db: Session = Depends(get_db)):
-    return crud.create_purchase(db, purchase)
-
+# ------------------------------------------------------------------
+# Log a new session
+# ------------------------------------------------------------------
 @app.post("/sessions/", response_model=schemas.Session)
-def log_session(session_in: schemas.SessionCreate, db: Session = Depends(get_db)):
+def create_session(session_in: schemas.SessionCreate, db: Session = Depends(get_db)):
     try:
+        # Pass duration and trainer separately
         return crud.create_session(db, session_in.duration_minutes, session_in.trainer)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@app.get("/sessions/", response_model=List[schemas.Session])
-def read_sessions(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    return crud.get_sessions(db, skip, limit)
+# ------------------------------------------------------------------
+# Buy a new purchase pack
+# ------------------------------------------------------------------
+@app.post("/purchases/", response_model=schemas.Purchase)
+def create_purchase(data: schemas.PurchaseCreate, db: Session = Depends(get_db)):
+    return crud.create_purchase(db, data)
 
-@app.get("/history", response_class=HTMLResponse)
-def serve_history():
-    return HTMLResponse(r"""
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Gym Tracker History</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body class="bg-light">
-  <div class="container py-4">
-    <h1 class="mb-4">Gym History</h1>
-    <div class="btn-group mb-4">
-      <button class="btn btn-outline-primary" data-range="current_month">Current Month</button>
-      <button class="btn btn-outline-primary" data-range="last_6_months">Last 6 Months</button>
-      <button class="btn btn-outline-primary" data-range="last_12_months">Last 12 Months</button>
-      <button class="btn btn-outline-primary" data-range="current_year">Current Year</button>
-    </div>
-    <div id="history-content"></div>
-    <a href="/" class="btn btn-secondary mt-4">Back</a>
-  </div>
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-  <script>
-    function getDates(r) {
-      const n = new Date(), s = new Date();
-      switch(r) {
-        case 'current_month':    s.setDate(1); break;
-        case 'last_6_months':    s.setMonth(n.getMonth() - 6); break;
-        case 'last_12_months':   s.setFullYear(n.getFullYear() - 1); break;
-        case 'current_year':     s.setMonth(0); s.setDate(1); break;
-      }
-      return { start: s.toISOString(), end: new Date().toISOString() };
-    }
-    function parseUTC(str) {
-      return (/Z|[+\-]\d{2}:\d{2}$/.test(str) ? new Date(str) : new Date(str + 'Z'));
-    }
-    async function loadHistory(r) {
-      const { start, end } = getDates(r);
-      const sr = await fetch(`/history/sessions/?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
-      const pr = await fetch(`/history/purchases/?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
-      const ss = await sr.json(), ps = await pr.json();
-      let html = '<h3>Sessions</h3><ul>' +
-        ss.map(x => `<li>${parseUTC(x.session_date).toLocaleString()}: ${x.duration_minutes} min with ${x.trainer}</li>`).join('') +
-        '</ul><h3>Purchases</h3><ul>' +
-        ps.map(x => `<li>${parseUTC(x.purchase_date).toLocaleString()}: ${x.duration_minutes} min package, ${x.sessions_remaining} left</li>`).join('') +
-        '</ul>';
-      document.getElementById('history-content').innerHTML = html;
-    }
-    document.addEventListener('click', e => {
-      if (e.target.dataset.range) loadHistory(e.target.dataset.range);
-    });
-    window.addEventListener('DOMContentLoaded', () => loadHistory('current_month'));
-  </script>
-</body>
-</html>
-""")
-
+# ------------------------------------------------------------------
+# History data endpoints (JSON)
+# ------------------------------------------------------------------
 @app.get("/history/sessions/", response_model=List[schemas.Session])
-def history_sessions(start: datetime = Query(None), end: datetime = Query(None), db: Session = Depends(get_db)):
+def history_sessions(
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+    db: Session = Depends(get_db)
+):
     return crud.get_sessions(db, start, end)
 
 @app.get("/history/purchases/", response_model=List[schemas.Purchase])
-def history_purchases(start: datetime = Query(None), end: datetime = Query(None), db: Session = Depends(get_db)):
+def history_purchases(
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+    db: Session = Depends(get_db)
+):
     return crud.get_purchases_history(db, start, end)
+
+# ------------------------------------------------------------------
+# History page (renders templates/history.html)
+# ------------------------------------------------------------------
+@app.get("/history", response_class=HTMLResponse)
+def history_page(request: Request, db: Session = Depends(get_db)):
+    sessions  = crud.get_sessions(db)
+    purchases = crud.get_purchases(db)
+    return templates.TemplateResponse(
+      "history.html",
+      {"request": request, "sessions": sessions, "purchases": purchases}
+    )
+
+# ------------------------------------------------------------------
+# AJAX API endpoints for editing and deleting
+# ------------------------------------------------------------------
+@app.post("/history/api/edit/session/{session_id}")
+async def api_edit_session(session_id: int, request: Request, db: Session = Depends(get_db)):
+    data = await request.json()
+    session_obj = db.query(models.Session).filter(models.Session.id == session_id).first()
+    if not session_obj:
+        raise HTTPException(404, "Session not found")
+
+    # 1) If the duration changed, refund one to the old purchase
+    old_duration = session_obj.duration_minutes
+    new_duration = data["duration_minutes"]
+    if new_duration != old_duration:
+        old_pack = db.query(models.Purchase)\
+                     .filter(models.Purchase.duration_minutes == old_duration)\
+                     .order_by(models.Purchase.purchase_date)\
+                     .first()
+        if old_pack:
+            old_pack.sessions_remaining += 1
+            db.add(old_pack)
+
+        # 2) Deduct one from a new pack of the new duration
+        new_pack = db.query(models.Purchase)\
+                     .filter(models.Purchase.duration_minutes == new_duration,
+                             models.Purchase.sessions_remaining > 0)\
+                     .order_by(models.Purchase.purchase_date)\
+                     .first()
+        if not new_pack:
+            raise HTTPException(400, f"No {new_duration}-min package available to reallocate")
+        new_pack.sessions_remaining -= 1
+        db.add(new_pack)
+
+        session_obj.duration_minutes = new_duration
+
+    # 3) Update the other fields
+    session_obj.session_date = datetime.fromisoformat(data["session_date"])
+    session_obj.trainer      = data["trainer"]
+
+    db.commit()
+    return {"success": True}
+
+
+@app.post("/history/api/edit/purchase/{purchase_id}")
+async def api_edit_purchase(
+    purchase_id: int,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    data = await request.json()
+    pur = db.query(models.Purchase).filter(models.Purchase.id == purchase_id).first()
+    if not pur:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+    pur.purchase_date      = datetime.fromisoformat(data["purchase_date"])
+    pur.total_sessions     = data.get("total_sessions")
+    pur.sessions_remaining = data.get("sessions_remaining")
+    db.commit()
+    return {"success": True}
+
+@app.post("/history/api/delete/session/{session_id}")
+def api_delete_session(session_id: int, db: Session = Depends(get_db)):
+    # 1) Load the session
+    session_obj = db.query(models.Session).filter(models.Session.id == session_id).first()
+    if not session_obj:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # 2) Increment the purchase's remaining count
+    purchase = db.query(models.Purchase)\
+                 .filter(models.Purchase.id == session_obj.purchase_id)\
+                 .first()
+    if purchase:
+        purchase.sessions_remaining += 1
+        db.add(purchase)
+
+    # 3) Delete the session record
+    db.delete(session_obj)
+
+    # 4) Commit both changes
+    db.commit()
+    return {"success": True}
+
+
+@app.post("/history/api/delete/purchase/{purchase_id}")
+def api_delete_purchase(purchase_id: int, db: Session = Depends(get_db)):
+    pur = db.query(models.Purchase).filter(models.Purchase.id == purchase_id).first()
+    if not pur:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+    db.delete(pur)
+    db.commit()
+    return {"success": True}
