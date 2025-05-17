@@ -1,5 +1,3 @@
-# gym_tracker/crud.py
-
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -106,7 +104,7 @@ def get_sessions(db: Session, start: datetime = None, end: datetime = None):
     return sessions
 
 # --------------------
-# Reports Helpers (for next step)
+# Reports Helpers
 # --------------------
 
 def get_training_by_trainer(db: Session, start: datetime, end: datetime):

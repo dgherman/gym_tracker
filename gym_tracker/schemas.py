@@ -29,7 +29,7 @@ class Session(SessionBase):
 
 class PurchaseBase(BaseModel):
     duration_minutes: int
-    cost: float
+    cost: float = 0.0
 
 class PurchaseCreate(PurchaseBase):
     pass
