@@ -173,7 +173,7 @@
           html += `
             <li class="list-group-item d-flex justify-content-between align-items-center small" id="purchase-card-${p.id}">
               <span class="flex-grow-1 text-wrap">
-                ${p.total_sessions}-session pack — ${label} <small>(${p.sessions_remaining} left)</small>
+                ${label} — ${p.duration_minutes}-min ${p.total_sessions} sessions pack <small>(${p.sessions_remaining} left)</small>
               </span>
               <span>
                 <button class="btn btn-sm btn-outline-danger action-btn py-0 px-2"

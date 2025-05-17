@@ -1,13 +1,30 @@
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, Query
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
-
+from sqlalchemy import func
+from pydantic import BaseModel
 from gym_tracker import crud, models, schemas
 from gym_tracker.database import SessionLocal, engine
+
+class CostByDuration(BaseModel):
+    duration: int
+    cost: float
+
+class MinutesByDuration(BaseModel):
+    duration: int
+    minutes: int
+
+class ReportsData(BaseModel):
+    training: List[dict]                # existing trainer‐minutes
+    total_cost: float                   # overall cost
+    cost_by_duration: List[CostByDuration]
+    total_minutes_by_duration: List[MinutesByDuration]
+
+    model_config = {"from_attributes": True}
 
 # ------------------------------------------------------------------
 # Database initialization
@@ -37,7 +54,8 @@ def home(request: Request, db: Session = Depends(get_db)):
 # ------------------------------------------------------------------
 # Summary endpoint
 # ------------------------------------------------------------------
-@app.get("/summary/")
+@app.get("/summary", response_model=dict)
+@app.get("/summary/", response_model=dict)
 def summary(db: Session = Depends(get_db)):
     # Return the raw dict from crud.get_summary:
     return crud.get_summary(db)
@@ -181,3 +199,48 @@ def api_delete_purchase(purchase_id: int, db: Session = Depends(get_db)):
     db.delete(pur)
     db.commit()
     return {"success": True}
+
+@app.get("/reports", response_class=HTMLResponse)
+def reports_page(request: Request):
+    """
+    Render the reports dashboard.
+    """
+    return templates.TemplateResponse("reports.html", {"request": request})
+
+@app.get("/reports/data", response_model=ReportsData)
+def reports_data(
+    start: datetime = Query(...),
+    end:   datetime = Query(...),
+    db:    Session  = Depends(get_db)
+):
+    training = crud.get_training_by_trainer(db, start, end)
+    total_cost = crud.get_total_cost(db, start, end)
+
+    cost_results = (
+        db.query(models.Purchase.duration_minutes, func.sum(models.Purchase.cost))
+          .filter(models.Purchase.purchase_date >= start,
+                  models.Purchase.purchase_date <= end)
+          .group_by(models.Purchase.duration_minutes)
+          .all()
+    )
+
+    minutes_results = (
+        db.query(models.Session.duration_minutes, func.sum(models.Session.duration_minutes))
+          .filter(models.Session.session_date >= start,
+                  models.Session.session_date <= end)
+          .group_by(models.Session.duration_minutes)
+          .all()
+    )
+
+    return {
+        "training": [
+            {"trainer": t, "minutes": int(m)} for t, m in training
+        ],
+        "total_cost": float(total_cost),
+        "cost_by_duration": [
+            {"duration": d, "cost": float(c)} for d, c in cost_results
+        ],
+        "total_minutes_by_duration": [
+            {"duration": d, "minutes": int(m)} for d, m in minutes_results
+        ],
+    }

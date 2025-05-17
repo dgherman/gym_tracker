@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Gym Tracker Reports</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    /* Shrink both charts to 66% width and center */
+    .chart-container {
+      width: 66%;
+      margin: auto;
+    }
+  </style>
+</head>
+<body class="bg-light p-4">
+  <nav class="navbar navbar-light mb-4">
+    <a class="navbar-brand" href="/">Gym Tracker</a>
+  </nav>
+
+  <h1 class="mb-4">Reports</h1>
+
+  <!-- Date-range tabs -->
+  <div class="btn-group mb-4" id="rangeButtons" role="group">
+    <button class="btn btn-outline-primary" data-range="current_month">Current Month</button>
+    <button class="btn btn-outline-primary" data-range="last_6_months">Last 6 Months</button>
+    <button class="btn btn-outline-primary" data-range="last_12_months">Last 12 Months</button>
+    <button class="btn btn-outline-primary" data-range="current_year">Current Year</button>
+  </div>
+
+  <!-- Summaries -->
+  <div class="mb-4">
+    <h3>Total Cost: <span id="totalCost">$0.00</span></h3>
+    <h3>Total Time: <span id="totalMinutes">0</span></h3>
+  </div>
+
+  <div class="row">
+    <!-- Training minutes pie -->
+    <div class="col-md-6 mb-4 chart-container">
+      <h5>Minutes by Trainer</h5>
+      <canvas id="trainingChart"></canvas>
+    </div>
+
+    <!-- Minutes by session duration pie -->
+    <div class="col-md-6 mb-4 chart-container">
+      <h5>Minutes by Session Duration</h5>
+      <canvas id="durationChart"></canvas>
+    </div>
+  </div>
+
+  <a href="/" class="btn btn-secondary mt-4">Back</a>
+
+  <script>
+    // Helpers
+    function getDates(range) {
+      const now = new Date(), start = new Date();
+      switch (range) {
+        case 'current_month':    start.setDate(1); break;
+        case 'last_6_months':    start.setMonth(now.getMonth()-5, 1); break;
+        case 'last_12_months':   start.setFullYear(now.getFullYear()-1, now.getMonth(), 1); break;
+        case 'current_year':     start.setMonth(0, 1); break;
+      }
+      return { start: start.toISOString(), end: now.toISOString() };
+    }
+
+    // Range tabs
+    const buttons = document.querySelectorAll('#rangeButtons button');
+    let currentRange = 'current_month';
+    buttons.forEach(btn => btn.addEventListener('click', () => {
+      buttons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentRange = btn.dataset.range;
+      loadReports(currentRange);
+    }));
+
+    window.addEventListener('DOMContentLoaded', () => {
+      buttons[0].classList.add('active');
+      initCharts();
+      loadReports(currentRange);
+    });
+
+    // Chart.js instances
+    let trainingChart, durationChart;
+    function initCharts() {
+      const tctx = document.getElementById('trainingChart').getContext('2d');
+      trainingChart = new Chart(tctx, {
+        type: 'pie',
+        data: { labels: [], datasets: [{ data: [], backgroundColor: [] }] },
+        options: { responsive: true }
+      });
+
+      const dctx = document.getElementById('durationChart').getContext('2d');
+      durationChart = new Chart(dctx, {
+        type: 'pie',
+        data: { labels: [], datasets: [{ data: [], backgroundColor: [] }] },
+        options: { responsive: true }
+      });
+    }
+
+    // Format minutes to "X hour(s) and Y minute(s)"
+    function formatHoursMinutes(totalMinutes) {
+      const hrs = Math.floor(totalMinutes / 60);
+      const mins = totalMinutes % 60;
+      const parts = [];
+      if (hrs > 0) {
+        parts.push(`${hrs} hour${hrs === 1 ? '' : 's'}`);
+      }
+      if (mins > 0) {
+        parts.push(`${mins} minute${mins === 1 ? '' : 's'}`);
+      }
+      // If exactly zero minutes (totalMinutes = 0) or exact hours, ensure something shows
+      if (parts.length === 0) {
+        return '0 minutes';
+      }
+      return parts.join(' and ');
+    }
+
+    // Fetch & render
+    async function loadReports(range) {
+      const { start, end } = getDates(range);
+      const res = await fetch(
+        `/reports/data?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
+      );
+      const {
+        training,
+        total_cost,
+        total_minutes_by_duration
+      } = await res.json();
+
+      // Total cost
+      document.getElementById('totalCost').textContent = `$${total_cost.toFixed(2)}`;
+
+      // Compute overall total minutes
+      const totalMinutes = total_minutes_by_duration
+        .reduce((sum, item) => sum + item.minutes, 0);
+      document.getElementById('totalMinutes').textContent =
+        formatHoursMinutes(totalMinutes);
+
+      // Minutes by Trainer chart
+      const trainerLabels = training.map(r => r.trainer);
+      const trainerData   = training.map(r => r.minutes);
+      const trainerColors = trainerLabels.map(name =>
+        name === 'Rachel' ? '#6f42c1' : '#000000'
+      );
+      trainingChart.data.labels = trainerLabels;
+      trainingChart.data.datasets[0].data = trainerData;
+      trainingChart.data.datasets[0].backgroundColor = trainerColors;
+      trainingChart.update();
+
+      // Minutes by Session Duration chart
+      const durLabels = total_minutes_by_duration.map(d => `${d.duration}-min`);
+      const durData   = total_minutes_by_duration.map(d => d.minutes);
+      const durColors = ['#28a745', '#ffc107'].slice(0, durLabels.length);
+      durationChart.data.labels = durLabels;
+      durationChart.data.datasets[0].data = durData;
+      durationChart.data.datasets[0].backgroundColor = durColors;
+      durationChart.update();
+    }
+  </script>
+</body>
+</html>

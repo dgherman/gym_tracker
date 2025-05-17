@@ -19,15 +19,16 @@
     <!-- Action Buttons -->
     <div class="mb-4">
       <div class="d-flex mb-2">
-        <button id="log30" class="btn btn-success me-2">Log 30‑min Session</button>
-        <button id="log45" class="btn btn-success">Log 45‑min Session</button>
+        <button id="log30" class="btn btn-success me-2">Log 30-min Session</button>
+        <button id="log45" class="btn btn-success">Log 45-min Session</button>
       </div>
       <div class="d-flex mb-2">
-        <button id="buy30" class="btn btn-warning me-2">Buy 30‑min Package</button>
-        <button id="buy45" class="btn btn-warning">Buy 45‑min Package</button>
+        <button id="buy30" class="btn btn-warning me-2">Buy 30-min Package</button>
+        <button id="buy45" class="btn btn-warning">Buy 45-min Package</button>
       </div>
       <div class="mb-2">
         <a href="/history" class="btn btn-info">View History</a>
+        <a href="/reports" class="btn btn-info ms-2">View Reports</a>
       </div>
     </div>
 
@@ -40,7 +41,7 @@
     <div class="modal-dialog">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title">Select Trainer</h5>
+          <h5 class="modal-title" id="trainerModalLabel">Select Trainer</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
@@ -57,31 +58,63 @@
     </div>
   </div>
 
+  <!-- Purchase Cost Modal -->
+  <div class="modal fade" id="purchaseCostModal" tabindex="-1" aria-labelledby="purchaseCostLabel" aria-hidden="true">
+    <div class="modal-dialog">
+      <form id="purchaseCostForm" class="modal-content" onsubmit="confirmPurchase(event)">
+        <div class="modal-header">
+          <h5 class="modal-title" id="purchaseCostLabel">Enter Package Cost</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label for="purchaseCostInput" class="form-label">Cost (USD)</label>
+            <div class="input-group">
+              <span class="input-group-text">$</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                inputmode="decimal"
+                class="form-control"
+                id="purchaseCostInput"
+                placeholder="0.00"
+                required
+              />
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-warning">Buy Package</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Scripts -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     let pendingDuration = null;
     const trainerModal = new bootstrap.Modal(document.getElementById('trainerModal'));
+    const purchaseModal = new bootstrap.Modal(document.getElementById('purchaseCostModal'));
 
     // Render the summary alerts
     async function refreshSummary() {
-  try {
-    const res = await fetch('/summary/');
-    const data = await res.json();
-
-    // Build one alert per package size:
-    document.getElementById('summary').innerHTML = Object.entries(data)
-      .map(([duration, remaining]) => `
-        <div class="alert ${remaining === 0 ? 'alert-danger' : 'alert-info'}">
-          Duration ${duration}-min: ${remaining} left
-        </div>
-      `).join('');
-  } catch {
-    document.getElementById('summary').textContent = 'Error loading remaining sessions';
-  }
-}
-
-
+      try {
+        const res = await fetch('/summary/');
+        const data = await res.json();
+        document.getElementById('summary').innerHTML = Object.entries(data)
+          .map(([duration, remaining]) => `
+            <div class="alert ${remaining === 0 ? 'alert-danger' : 'alert-info'}">
+              Duration ${duration}-min: ${remaining} left
+            </div>
+          `).join('');
+      } catch (err) {
+        console.error("refreshSummary error:", err);
+        document.getElementById('summary').textContent = 'Error loading remaining sessions';
+      }
+    }
 
     // Prompt trainer selection
     function promptTrainer(duration) {
@@ -114,29 +147,43 @@
       refreshSummary();
     });
 
-    // Buy package
-    async function buyPackage(duration) {
-      const res = await fetch('/purchases/', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ duration_minutes: duration })
-      });
-
-      const notif = document.getElementById('notification');
-      if (res.ok) {
-        const p = await res.json();
-        notif.innerHTML = `<div class="alert alert-success">
-          Purchased ${p.duration_minutes}-min package.
-        </div>`;
-      } else {
-        const e = await res.json();
-        notif.innerHTML = `<div class="alert alert-danger">Error: ${e.detail}</div>`;
-      }
-
-      refreshSummary();
+    // Show purchase cost modal
+    function buyPackage(duration) {
+      pendingDuration = duration;
+      document.getElementById('purchaseCostInput').value = '';
+      purchaseModal.show();
     }
 
-    // Event bindings
+    // Handle purchase submission
+    function confirmPurchase(evt) {
+      evt.preventDefault();
+      const cost = parseFloat(document.getElementById('purchaseCostInput').value);
+      if (isNaN(cost) || cost < 0) {
+        alert("Please enter a valid non-negative cost.");
+        return;
+      }
+      purchaseModal.hide();
+
+      fetch('/purchases/', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ duration_minutes: pendingDuration, cost })
+      })
+      .then(res => res.json())
+      .then(p => {
+        document.getElementById('notification').innerHTML = `
+          <div class="alert alert-success">
+            Purchased ${p.duration_minutes}-min package for $${p.cost.toFixed(2)}.
+          </div>`;
+        refreshSummary();
+      })
+      .catch(() => {
+        document.getElementById('notification').innerHTML = `
+          <div class="alert alert-danger">Error purchasing package.</div>`;
+      });
+    }
+
+    // Bind buy and log buttons
     document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('log30').addEventListener('click', () => promptTrainer(30));
       document.getElementById('log45').addEventListener('click', () => promptTrainer(45));
