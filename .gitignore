@@ -44,6 +44,7 @@ bin/
 
 # Misc
 .DS_Store
+.env
 
 # Ignore egg-info generated directories
 gym_tracker.egg-info/
