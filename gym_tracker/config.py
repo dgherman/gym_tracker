@@ -1,4 +1,3 @@
-# gym_tracker/config.py
 import os
 from functools import lru_cache
 from urllib.parse import quote_plus
