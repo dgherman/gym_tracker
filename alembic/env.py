@@ -1,15 +1,14 @@
-# alembic/env.py
 from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 from alembic import context
 
-# >>> Add these imports <<<
 from gym_tracker.config import get_settings
 from gym_tracker import models
 
 # this is the Alembic Config object
 config = context.config
 
+settings = get_settings()
 # Escape % for ConfigParser interpolation
 url_for_ini = settings.SQLALCHEMY_DATABASE_URL.replace("%", "%%")
 config.set_main_option("sqlalchemy.url", url_for_ini)
@@ -27,7 +26,7 @@ def run_migrations_offline():
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
-        compare_type=True,     # detect column type changes
+        compare_type=True,
         compare_server_default=True,
     )
     with context.begin_transaction():
