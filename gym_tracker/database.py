@@ -1,20 +1,18 @@
-import os
+# database.py (optional tidy-up)
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
+from gym_tracker.config import get_settings
 
-# Database connection parameters from environment
-DB_USER = os.getenv("DB_USER", "gym")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "abc123")
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "3306")
-DB_NAME = os.getenv("DB_NAME", "gym_tracker")
+settings = get_settings()
 
-# Fallback to full DATABASE_URL if provided
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+engine = create_engine(
+    settings.SQLALCHEMY_DATABASE_URL,
+    pool_pre_ping=settings.DB_POOL_PRE_PING,
+    # Optionally enable the pool knobs below for MySQL/Postgres (ignored by SQLite):
+    # pool_size=settings.DB_POOL_SIZE,
+    # max_overflow=settings.DB_MAX_OVERFLOW,
+    # pool_timeout=settings.DB_POOL_TIMEOUT,
+    # pool_recycle=settings.DB_POOL_RECYCLE,
 )
-
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

@@ -1,0 +1,92 @@
+<style>
+  /* Burger + panel styling (scoped-ish by ids/classes we control) */
+  .gt-nav {
+    position: sticky; top: 0; z-index: 50;
+    background: #111827; color: #e5e7eb;  /* slate-900 / gray-200 */
+    border-bottom: 1px solid #1f2937;     /* slate-800 */
+  }
+  .gt-nav__inner {
+    max-width: 960px; margin: 0 auto; padding: 0.5rem 1rem;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .gt-brand { font-weight: 600; letter-spacing: .02em; }
+  .gt-burger {
+    display: inline-flex; gap: 0.4rem; align-items: center;
+    cursor: pointer; user-select: none;
+  }
+  .gt-burger__icon { width: 24px; height: 2px; background: #e5e7eb; position: relative; }
+  .gt-burger__icon::before, .gt-burger__icon::after {
+    content: ""; position: absolute; left: 0; width: 24px; height: 2px; background: #e5e7eb;
+  }
+  .gt-burger__icon::before { top: -7px; }
+  .gt-burger__icon::after  { top: 7px; }
+
+  #gt-menu {
+    display: none;
+    background: #1f2937;                 /* ← lighter */
+    border-top: 1px solid #374151;       /* slate-700 */
+  }
+  #gt-menu.open { display: block; }
+  .gt-menu__content {
+    max-width: 960px; margin: 0 auto; padding: 0.75rem 1rem;
+    display: grid; gap: 0.25rem;
+  }
+  .gt-menu__label { font-size: 0.75rem; color: #9ca3af; }
+  .gt-menu__value { font-size: 0.95rem; color: #f9fafb; }
+  .gt-logout {
+    display: block; width: 100%; text-align: center;
+    margin-top: 0.5rem;
+    padding: 0.55rem 0.8rem;
+    border-radius: 0.5rem;
+    background: #ef4444; color: #ffffff; text-decoration: none; font-weight: 600;
+  }
+  .gt-logout:hover { background: #dc2626; }
+</style>
+
+<nav class="gt-nav">
+  <div class="gt-nav__inner">
+    <div class="gt-brand">Welcome, {{ current_user.full_name}} !</div>
+    <button id="gt-burger-btn" type="button" class="gt-burger" aria-expanded="false" aria-controls="gt-menu">
+      <span class="gt-burger__icon" aria-hidden="true"></span>
+      <span>Menu</span>
+    </button>
+  </div>
+  <div id="gt-menu" role="region" aria-label="User menu">
+    <div class="gt-menu__content">
+      {% if current_user %}
+        <div>
+          <div class="gt-menu__label">Signed in as</div>
+          <div class="gt-menu__value">
+            <span style="opacity:.7">{{ current_user.email or "no-email" }}</span>
+          </div>
+        </div>
+        <a class="gt-logout" href="/logout">Logout</a>
+      {% else %}
+        <div class="gt-menu__value">Not signed in</div>
+        <a class="gt-logout" href="/login" style="background:#2563eb">Sign in with Google</a>
+      {% endif %}
+    </div>
+  </div>
+</nav>
+
+<script>
+  (function () {
+    const btn = document.getElementById("gt-burger-btn");
+    const menu = document.getElementById("gt-menu");
+    if (!btn || !menu) return;
+
+    function closeOnOutside(e) {
+      if (!menu.contains(e.target) && !btn.contains(e.target)) {
+        menu.classList.remove("open");
+        btn.setAttribute("aria-expanded", "false");
+        document.removeEventListener("click", closeOnOutside);
+      }
+    }
+
+    btn.addEventListener("click", function () {
+      const open = menu.classList.toggle("open");
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) document.addEventListener("click", closeOnOutside);
+    });
+  })();
+</script>
