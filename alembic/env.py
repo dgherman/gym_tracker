@@ -10,10 +10,9 @@ from gym_tracker import models
 # this is the Alembic Config object
 config = context.config
 
-# If alembic.ini does not have sqlalchemy.url, pull from app settings
-settings = get_settings()
-if not config.get_main_option("sqlalchemy.url"):
-    config.set_main_option("sqlalchemy.url", settings.SQLALCHEMY_DATABASE_URL)
+# Escape % for ConfigParser interpolation
+url_for_ini = settings.SQLALCHEMY_DATABASE_URL.replace("%", "%%")
+config.set_main_option("sqlalchemy.url", url_for_ini)
 
 # Interpret the config file for Python logging.
 if config.config_file_name is not None:
