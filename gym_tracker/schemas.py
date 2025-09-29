@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 # --------------------
 # Session Schemas
@@ -13,6 +13,13 @@ class SessionBase(BaseModel):
 class SessionCreate(BaseModel):
     duration_minutes: int
     trainer: str
+
+    @field_validator('trainer')
+    @classmethod
+    def validate_trainer(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Trainer name is required and cannot be empty')
+        return v.strip()
 
 class Session(SessionBase):
     id: int
@@ -53,11 +60,23 @@ class TrainerBase(BaseModel):
     name: str
 
 class TrainerCreate(TrainerBase):
-    pass
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Trainer name is required and cannot be empty')
+        return v.strip()
 
 class TrainerUpdate(BaseModel):
     name: str = None
     is_active: bool = None
+
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v):
+        if v is not None and (not v or not v.strip()):
+            raise ValueError('Trainer name cannot be empty')
+        return v.strip() if v else v
 
 class Trainer(TrainerBase):
     id: int

@@ -51,8 +51,7 @@
             <div class="mb-3">
               <label class="form-label">Trainer</label>
               <select id="sessionTrainer" class="form-select">
-                <option>Rachel</option>
-                <option>Lindsay</option>
+                <!-- Options will be populated dynamically -->
               </select>
             </div>
           </div>
@@ -69,6 +68,22 @@
   <script>
     // Helpers
     function pad(n) { return n.toString().padStart(2,'0'); }
+
+    // Load trainers from API
+    async function loadTrainers() {
+      try {
+        const res = await fetch('/api/trainers/');
+        const trainers = await res.json();
+        const select = document.getElementById('sessionTrainer');
+        select.innerHTML = trainers
+          .map(trainer => `<option value="${trainer.name}">${trainer.name}</option>`)
+          .join('');
+      } catch (err) {
+        console.error("loadTrainers error:", err);
+        document.getElementById('sessionTrainer').innerHTML =
+          '<option disabled>Error loading trainers</option>';
+      }
+    }
 
     function parseUTC(s) {
       // Parse as UTC
@@ -93,6 +108,7 @@
     }));
     window.addEventListener('DOMContentLoaded', () => {
       buttons[0].classList.add('active');
+      loadTrainers();
       loadHistory(currentRange);
     });
 
@@ -211,11 +227,14 @@
 
     // Edit Session
     document.getElementById('editSessionModal')
-      .addEventListener('show.bs.modal', e => {
+      .addEventListener('show.bs.modal', async e => {
         const btn = e.relatedTarget;
         document.getElementById('sessionId').value       = btn.dataset.id;
         document.getElementById('sessionDate').value     = btn.dataset.date;
         document.getElementById('sessionDuration').value = btn.dataset.duration;
+
+        // Ensure trainers are loaded before setting the value
+        await loadTrainers();
         document.getElementById('sessionTrainer').value  = btn.dataset.trainer;
       });
 
