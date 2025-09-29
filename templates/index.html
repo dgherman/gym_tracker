@@ -47,8 +47,7 @@
         </div>
         <div class="modal-body">
           <select id="modalTrainerSelect" class="form-select">
-            <option>Rachel</option>
-            <option>Lindsay</option>
+            <!-- Options will be populated dynamically -->
           </select>
         </div>
         <div class="modal-footer">
@@ -99,6 +98,22 @@
     let pendingDuration = null;
     const trainerModal = new bootstrap.Modal(document.getElementById('trainerModal'));
     const purchaseModal = new bootstrap.Modal(document.getElementById('purchaseCostModal'));
+
+    // Load trainers from API
+    async function loadTrainers() {
+      try {
+        const res = await fetch('/api/trainers/');
+        const trainers = await res.json();
+        const select = document.getElementById('modalTrainerSelect');
+        select.innerHTML = trainers
+          .map(trainer => `<option value="${trainer.name}">${trainer.name}</option>`)
+          .join('');
+      } catch (err) {
+        console.error("loadTrainers error:", err);
+        document.getElementById('modalTrainerSelect').innerHTML =
+          '<option disabled>Error loading trainers</option>';
+      }
+    }
 
     // Render the summary alerts
     async function refreshSummary() {
@@ -190,6 +205,7 @@
       document.getElementById('log45').addEventListener('click', () => promptTrainer(45));
       document.getElementById('buy30').addEventListener('click', () => buyPackage(30));
       document.getElementById('buy45').addEventListener('click', () => buyPackage(45));
+      loadTrainers();
       refreshSummary();
     });
   </script>

@@ -67,6 +67,21 @@ class Purchase(Base):
     sessions = relationship("Session", back_populates="purchase")
 
 
+class Trainer(Base):
+    __tablename__ = "trainers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False, index=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    # Relationship to sessions
+    sessions = relationship("Session", back_populates="trainer_rel")
+
+    def __repr__(self) -> str:
+        return f"<Trainer id={self.id} name={self.name!r} active={self.is_active}>"
+
+
 class Session(Base):
     __tablename__ = "sessions"
 
@@ -74,10 +89,12 @@ class Session(Base):
     purchase_id = Column(Integer, ForeignKey("purchases.id"))
     session_date = Column(DateTime, index=True)
     duration_minutes = Column(Integer)
-    trainer = Column(String(255), index=True)
+    trainer = Column(String(255), index=True)  # Keep for backward compatibility
+    trainer_id = Column(Integer, ForeignKey("trainers.id"), nullable=True)  # New FK
 
     # NEW: who created/recorded this session (nullable for legacy rows)
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_by_user = relationship("User", back_populates="created_sessions")
 
     purchase = relationship("Purchase", back_populates="sessions")
+    trainer_rel = relationship("Trainer", back_populates="sessions")

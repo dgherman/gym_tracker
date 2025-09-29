@@ -43,3 +43,27 @@ class Purchase(PurchaseBase):
     model_config = {
         "from_attributes": True
     }
+
+
+# --------------------
+# Trainer Schemas
+# --------------------
+
+class TrainerBase(BaseModel):
+    name: str
+
+class TrainerCreate(TrainerBase):
+    pass
+
+class TrainerUpdate(BaseModel):
+    name: str = None
+    is_active: bool = None
+
+class Trainer(TrainerBase):
+    id: int
+    is_active: bool
+    created_at: datetime
+
+    model_config = {
+        "from_attributes": True
+    }

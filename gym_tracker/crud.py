@@ -201,3 +201,68 @@ def get_total_cost(
         q = q.filter(models.Purchase.logged_by_user_id == user_id)
     total = q.scalar()
     return total or 0.0
+
+
+# --------------------
+# Trainer CRUD
+# --------------------
+
+def create_trainer(db: Session, trainer_in: schemas.TrainerCreate):
+    """Create a new trainer."""
+    db_trainer = models.Trainer(
+        name=trainer_in.name,
+        is_active=True,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(db_trainer)
+    db.commit()
+    db.refresh(db_trainer)
+    return db_trainer
+
+
+def get_trainers(
+    db: Session,
+    skip: int = 0,
+    limit: int = 100,
+    active_only: bool = True,
+):
+    """Get list of trainers, optionally filtered by active status."""
+    q = db.query(models.Trainer)
+    if active_only:
+        q = q.filter(models.Trainer.is_active == True)
+    return q.order_by(models.Trainer.name).offset(skip).limit(limit).all()
+
+
+def get_trainer(db: Session, trainer_id: int):
+    """Get a specific trainer by ID."""
+    return db.query(models.Trainer).filter(models.Trainer.id == trainer_id).first()
+
+
+def update_trainer(
+    db: Session,
+    trainer_id: int,
+    trainer_update: schemas.TrainerUpdate,
+):
+    """Update a trainer."""
+    trainer = get_trainer(db, trainer_id)
+    if not trainer:
+        return None
+
+    update_data = trainer_update.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(trainer, field, value)
+
+    db.commit()
+    db.refresh(trainer)
+    return trainer
+
+
+def delete_trainer(db: Session, trainer_id: int):
+    """Soft delete a trainer by setting is_active to False."""
+    trainer = get_trainer(db, trainer_id)
+    if not trainer:
+        return None
+
+    trainer.is_active = False
+    db.commit()
+    return trainer

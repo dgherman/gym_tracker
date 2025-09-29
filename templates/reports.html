@@ -99,6 +99,24 @@
       });
     }
 
+    // Generate a consistent color for a given string using a hash function
+    function generateTrainerColor(trainerName) {
+      // Simple string hash function
+      let hash = 0;
+      for (let i = 0; i < trainerName.length; i++) {
+        const char = trainerName.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32-bit integer
+      }
+
+      // Convert hash to positive number and generate HSL color
+      const hue = Math.abs(hash) % 360;
+      const saturation = 65 + (Math.abs(hash) % 25); // 65-90%
+      const lightness = 45 + (Math.abs(hash) % 15);  // 45-60%
+
+      return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+    }
+
     // Format minutes to "X hour(s) and Y minute(s)"
     function formatHoursMinutes(totalMinutes) {
       const hrs = Math.floor(totalMinutes / 60);
@@ -141,9 +159,7 @@
       // Minutes by Trainer chart
       const trainerLabels = training.map(r => r.trainer);
       const trainerData   = training.map(r => r.minutes);
-      const trainerColors = trainerLabels.map(name =>
-        name === 'Rachel' ? '#6f42c1' : '#000000'
-      );
+      const trainerColors = trainerLabels.map(name => generateTrainerColor(name));
       trainingChart.data.labels = trainerLabels;
       trainingChart.data.datasets[0].data = trainerData;
       trainingChart.data.datasets[0].backgroundColor = trainerColors;

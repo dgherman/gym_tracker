@@ -2,8 +2,9 @@
   /* Burger + panel styling (scoped-ish by ids/classes we control) */
   .gt-nav {
     position: sticky; top: 0; z-index: 50;
-    background: #111827; color: #e5e7eb;  /* slate-900 / gray-200 */
-    border-bottom: 1px solid #1f2937;     /* slate-800 */
+    background: #1e40af; color: #ffffff;  /* Blue background with white text */
+    border-bottom: 1px solid #1d4ed8;     /* Slightly darker blue border */
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Subtle shadow for definition */
   }
   .gt-nav__inner {
     max-width: 960px; margin: 0 auto; padding: 0.5rem 1rem;
@@ -14,25 +15,25 @@
     display: inline-flex; gap: 0.4rem; align-items: center;
     cursor: pointer; user-select: none;
   }
-  .gt-burger__icon { width: 24px; height: 2px; background: #e5e7eb; position: relative; }
+  .gt-burger__icon { width: 24px; height: 2px; background: #ffffff; position: relative; }
   .gt-burger__icon::before, .gt-burger__icon::after {
-    content: ""; position: absolute; left: 0; width: 24px; height: 2px; background: #e5e7eb;
+    content: ""; position: absolute; left: 0; width: 24px; height: 2px; background: #ffffff;
   }
   .gt-burger__icon::before { top: -7px; }
   .gt-burger__icon::after  { top: 7px; }
 
   #gt-menu {
     display: none;
-    background: #1f2937;                 /* ← lighter */
-    border-top: 1px solid #374151;       /* slate-700 */
+    background: #1d4ed8;                 /* Darker blue to match header */
+    border-top: 1px solid #1e40af;       /* Original header blue */
   }
   #gt-menu.open { display: block; }
   .gt-menu__content {
     max-width: 960px; margin: 0 auto; padding: 0.75rem 1rem;
     display: grid; gap: 0.25rem;
   }
-  .gt-menu__label { font-size: 0.75rem; color: #9ca3af; }
-  .gt-menu__value { font-size: 0.95rem; color: #f9fafb; }
+  .gt-menu__label { font-size: 0.75rem; color: #bfdbfe; }
+  .gt-menu__value { font-size: 0.95rem; color: #ffffff; }
   .gt-logout {
     display: block; width: 100%; text-align: center;
     margin-top: 0.5rem;
@@ -41,6 +42,14 @@
     background: #ef4444; color: #ffffff; text-decoration: none; font-weight: 600;
   }
   .gt-logout:hover { background: #dc2626; }
+  .gt-admin-link {
+    display: block; width: 100%; text-align: center;
+    margin-top: 0.5rem;
+    padding: 0.45rem 0.8rem;
+    border-radius: 0.5rem;
+    background: #7c3aed; color: #ffffff; text-decoration: none; font-weight: 600;
+  }
+  .gt-admin-link:hover { background: #6d28d9; color: #ffffff; }
 </style>
 
 <nav class="gt-nav">
@@ -60,6 +69,9 @@
             <span style="opacity:.7">{{ current_user.email or "no-email" }}</span>
           </div>
         </div>
+        {% if current_user.role == "admin" %}
+          <a class="gt-admin-link" href="/admin">Admin Console</a>
+        {% endif %}
         <a class="gt-logout" href="/logout">Logout</a>
       {% else %}
         <div class="gt-menu__value">Not signed in</div>
