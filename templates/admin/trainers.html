@@ -103,7 +103,9 @@
           <div class="modal-body">
             <div class="mb-3">
               <label for="trainerName" class="form-label">Trainer Name</label>
-              <input type="text" class="form-control" id="trainerName" required>
+              <input type="text" class="form-control" id="trainerName" required
+                     placeholder="Enter trainer name" pattern=".*\S+.*"
+                     title="Trainer name cannot be empty or contain only spaces">
             </div>
           </div>
           <div class="modal-footer">
@@ -127,7 +129,9 @@
           <div class="modal-body">
             <div class="mb-3">
               <label for="editTrainerName" class="form-label">Trainer Name</label>
-              <input type="text" class="form-control" id="editTrainerName" required>
+              <input type="text" class="form-control" id="editTrainerName" required
+                     placeholder="Enter trainer name" pattern=".*\S+.*"
+                     title="Trainer name cannot be empty or contain only spaces">
             </div>
             <div class="mb-3">
               <div class="form-check">
@@ -158,6 +162,12 @@
       e.preventDefault();
       const name = document.getElementById('trainerName').value;
 
+      // Client-side validation
+      if (!name || !name.trim()) {
+        showNotification('Trainer name is required and cannot be empty', 'warning');
+        return;
+      }
+
       try {
         const response = await fetch('/api/trainers/', {
           method: 'POST',
@@ -172,7 +182,8 @@
           setTimeout(() => location.reload(), 1000);
         } else {
           const error = await response.json();
-          showNotification(error.detail || 'Error adding trainer', 'danger');
+          const errorMessage = extractErrorMessage(error);
+          showNotification(errorMessage, 'danger');
         }
       } catch (err) {
         showNotification('Error adding trainer', 'danger');
@@ -184,6 +195,12 @@
       e.preventDefault();
       const name = document.getElementById('editTrainerName').value;
       const is_active = document.getElementById('editTrainerActive').checked;
+
+      // Client-side validation
+      if (!name || !name.trim()) {
+        showNotification('Trainer name is required and cannot be empty', 'warning');
+        return;
+      }
 
       try {
         const response = await fetch(`/api/trainers/${currentTrainerId}`, {
@@ -198,7 +215,8 @@
           setTimeout(() => location.reload(), 1000);
         } else {
           const error = await response.json();
-          showNotification(error.detail || 'Error updating trainer', 'danger');
+          const errorMessage = extractErrorMessage(error);
+          showNotification(errorMessage, 'danger');
         }
       } catch (err) {
         showNotification('Error updating trainer', 'danger');
@@ -235,11 +253,36 @@
           setTimeout(() => location.reload(), 1000);
         } else {
           const error = await response.json();
-          showNotification(error.detail || 'Error updating trainer', 'danger');
+          const errorMessage = extractErrorMessage(error);
+          showNotification(errorMessage, 'danger');
         }
       } catch (err) {
         showNotification('Error updating trainer', 'danger');
       }
+    }
+
+    // Extract user-friendly error message from API response
+    function extractErrorMessage(errorResponse) {
+      // Handle Pydantic validation errors (422)
+      if (errorResponse.detail && Array.isArray(errorResponse.detail)) {
+        const firstError = errorResponse.detail[0];
+        if (firstError && firstError.msg) {
+          return firstError.msg;
+        }
+      }
+
+      // Handle simple error messages
+      if (typeof errorResponse.detail === 'string') {
+        return errorResponse.detail;
+      }
+
+      // Handle case where detail is an object
+      if (errorResponse.detail && typeof errorResponse.detail === 'object') {
+        return JSON.stringify(errorResponse.detail);
+      }
+
+      // Fallback
+      return 'An unexpected error occurred';
     }
 
     // Show notification function

@@ -32,7 +32,7 @@ def test_create_and_get_purchases(db):
 
 
 def test_create_and_get_sessions(db):
-    session = crud.create_session(db, duration_minutes=30)
+    session = crud.create_session(db, duration_minutes=30, trainer="Rachel")
     assert session.id == 1
     assert session.duration_minutes == 30
     assert session.purchase_id == 1
@@ -50,10 +50,10 @@ def test_create_with_custom_trainer(db):
 
 
 def test_exhaustion_flag(db):
-    # exhaust remaining sessions with default trainer
+    # exhaust remaining sessions with Rachel
     last = None
     for _ in range(8):
-        last = crud.create_session(db, duration_minutes=30)
+        last = crud.create_session(db, duration_minutes=30, trainer="Rachel")
     assert last.purchase_exhausted is True
     with pytest.raises(ValueError):
-        crud.create_session(db, duration_minutes=30)
+        crud.create_session(db, duration_minutes=30, trainer="Rachel")

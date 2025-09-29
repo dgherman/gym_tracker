@@ -93,7 +93,7 @@ def get_summary(db: Session, *, user_id: Optional[int] = None):
 def create_session(
     db: Session,
     duration_minutes: int,
-    trainer: str = "Rachel",
+    trainer: str,
     *,
     created_by_user_id: Optional[int] = None,
 ):
@@ -102,6 +102,9 @@ def create_session(
     and records who created it (created_by_user_id).
     Only consumes from THIS user's packs when a user_id is provided.
     """
+    # Validate trainer is not empty
+    if not trainer or not trainer.strip():
+        raise ValueError("Trainer name is required and cannot be empty")
     pack_q = (
         db.query(models.Purchase)
         .filter(
