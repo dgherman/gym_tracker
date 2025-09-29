@@ -84,6 +84,15 @@ def get_current_user(request: Request, db: Session) -> models.User | None:
     user_id = request.session.get("user_id")
     return db.get(models.User, user_id) if user_id else None
 
+def require_admin(request: Request, db: Session = Depends(get_db)) -> models.User:
+    """Dependency that requires admin role."""
+    user = get_current_user(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
 # -------------------------------------------------------------
 # Templates
 # -------------------------------------------------------------
@@ -385,3 +394,77 @@ def reports_data(
         "cost_by_duration": [{"duration": d, "cost": float(c)} for d, c in cost_results],
         "total_minutes_by_duration": [{"duration": d, "minutes": int(m)} for d, m in minutes_results],
     }
+
+
+# -------------------------------------------------------------
+# Trainer Management API endpoints
+# -------------------------------------------------------------
+
+@app.get("/api/trainers/", response_model=List[schemas.Trainer])
+def list_trainers(db: Session = Depends(get_db)):
+    """Get list of active trainers."""
+    return crud.get_trainers(db, active_only=True)
+
+@app.post("/api/trainers/", response_model=schemas.Trainer)
+def create_trainer(
+    trainer_in: schemas.TrainerCreate,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Create a new trainer (admin only)."""
+    return crud.create_trainer(db, trainer_in)
+
+@app.put("/api/trainers/{trainer_id}", response_model=schemas.Trainer)
+def update_trainer(
+    trainer_id: int,
+    trainer_update: schemas.TrainerUpdate,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Update a trainer (admin only)."""
+    trainer = crud.update_trainer(db, trainer_id, trainer_update)
+    if not trainer:
+        raise HTTPException(status_code=404, detail="Trainer not found")
+    return trainer
+
+@app.delete("/api/trainers/{trainer_id}", response_model=schemas.Trainer)
+def delete_trainer(
+    trainer_id: int,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Soft delete a trainer (admin only)."""
+    trainer = crud.delete_trainer(db, trainer_id)
+    if not trainer:
+        raise HTTPException(status_code=404, detail="Trainer not found")
+    return trainer
+
+
+# -------------------------------------------------------------
+# Admin Console
+# -------------------------------------------------------------
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_console(
+    request: Request,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin console main dashboard."""
+    return templates.TemplateResponse(
+        "admin/index.html",
+        {"request": request, "current_user": admin_user}
+    )
+
+@app.get("/admin/trainers", response_class=HTMLResponse)
+def admin_trainers(
+    request: Request,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin trainer management page."""
+    trainers = crud.get_trainers(db, active_only=False)
+    return templates.TemplateResponse(
+        "admin/trainers.html",
+        {"request": request, "current_user": admin_user, "trainers": trainers}
+    )
