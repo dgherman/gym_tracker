@@ -31,6 +31,8 @@ PUBLIC_PATHS = {
     "/static",
     "/favicon.ico",
     "/me",  # keep public if you use it for debugging
+    "/privacy",
+    "/terms",
 }
 
 class LoginRequiredMiddleware(BaseHTTPMiddleware):
@@ -131,6 +133,24 @@ def healthz():
 def home(request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
     return templates.TemplateResponse("index.html", {"request": request, "current_user": user})
+
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy_policy(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    return templates.TemplateResponse("privacy.html", {
+        "request": request,
+        "current_user": user,
+        "last_updated": "September 29, 2025"
+    })
+
+@app.get("/terms", response_class=HTMLResponse)
+def terms_of_service(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    return templates.TemplateResponse("terms.html", {
+        "request": request,
+        "current_user": user,
+        "last_updated": "September 29, 2025"
+    })
 
 # -------------------------------------------------------------
 # Summary endpoint (scoped)

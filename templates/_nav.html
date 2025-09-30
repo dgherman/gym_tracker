@@ -54,7 +54,13 @@
 
 <nav class="gt-nav">
   <div class="gt-nav__inner">
-    <div class="gt-brand">Welcome, {{ current_user.full_name}} !</div>
+    <div class="gt-brand">
+      {% if current_user %}
+        Welcome, {{ current_user.full_name}} !
+      {% else %}
+        Gym Tracker
+      {% endif %}
+    </div>
     <button id="gt-burger-btn" type="button" class="gt-burger" aria-expanded="false" aria-controls="gt-menu">
       <span class="gt-burger__icon" aria-hidden="true"></span>
       <span>Menu</span>
