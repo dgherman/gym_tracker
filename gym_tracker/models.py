@@ -98,3 +98,22 @@ class Session(Base):
 
     purchase = relationship("Purchase", back_populates="sessions")
     trainer_rel = relationship("Trainer", back_populates="sessions")
+
+
+# ─────────────────────────────────────────────────────────────
+# Package (templates for purchasing session packages)
+# ─────────────────────────────────────────────────────────────
+class Package(Base):
+    __tablename__ = "packages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    duration_minutes = Column(Integer, nullable=False, index=True)
+    num_people = Column(Integer, nullable=False, default=1)
+    total_sessions = Column(Integer, nullable=False)
+    price_per_session = Column(Float, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    def __repr__(self) -> str:
+        return f"<Package id={self.id} name={self.name!r} duration={self.duration_minutes} people={self.num_people}>"

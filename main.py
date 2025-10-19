@@ -488,3 +488,61 @@ def admin_trainers(
         "admin/trainers.html",
         {"request": request, "current_user": admin_user, "trainers": trainers}
     )
+
+
+# -------------------------------------------------------------
+# Package Management API endpoints
+# -------------------------------------------------------------
+
+@app.get("/api/packages/", response_model=List[schemas.Package])
+def list_packages(db: Session = Depends(get_db)):
+    """Get list of active packages."""
+    return crud.get_packages(db, active_only=True)
+
+@app.post("/api/packages/", response_model=schemas.Package)
+def create_package(
+    package_in: schemas.PackageCreate,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Create a new package (admin only)."""
+    return crud.create_package(db, package_in)
+
+@app.put("/api/packages/{package_id}", response_model=schemas.Package)
+def update_package(
+    package_id: int,
+    package_update: schemas.PackageUpdate,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Update a package (admin only)."""
+    package = crud.update_package(db, package_id, package_update)
+    if not package:
+        raise HTTPException(status_code=404, detail="Package not found")
+    return package
+
+@app.delete("/api/packages/{package_id}", response_model=schemas.Package)
+def delete_package(
+    package_id: int,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Soft delete a package (admin only)."""
+    package = crud.delete_package(db, package_id)
+    if not package:
+        raise HTTPException(status_code=404, detail="Package not found")
+    return package
+
+
+@app.get("/admin/packages", response_class=HTMLResponse)
+def admin_packages(
+    request: Request,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin package management page."""
+    packages = crud.get_packages(db, active_only=False)
+    return templates.TemplateResponse(
+        "admin/packages.html",
+        {"request": request, "current_user": admin_user, "packages": packages}
+    )

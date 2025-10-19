@@ -269,3 +269,72 @@ def delete_trainer(db: Session, trainer_id: int):
     trainer.is_active = False
     db.commit()
     return trainer
+
+
+# --------------------
+# Package CRUD
+# --------------------
+
+def create_package(db: Session, package_in: schemas.PackageCreate):
+    """Create a new package."""
+    db_package = models.Package(
+        name=package_in.name,
+        duration_minutes=package_in.duration_minutes,
+        num_people=package_in.num_people,
+        total_sessions=package_in.total_sessions,
+        price_per_session=package_in.price_per_session,
+        is_active=True,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(db_package)
+    db.commit()
+    db.refresh(db_package)
+    return db_package
+
+
+def get_packages(
+    db: Session,
+    skip: int = 0,
+    limit: int = 100,
+    active_only: bool = True,
+):
+    """Get list of packages, optionally filtered by active status."""
+    q = db.query(models.Package)
+    if active_only:
+        q = q.filter(models.Package.is_active == True)
+    return q.order_by(models.Package.duration_minutes, models.Package.num_people).offset(skip).limit(limit).all()
+
+
+def get_package(db: Session, package_id: int):
+    """Get a specific package by ID."""
+    return db.query(models.Package).filter(models.Package.id == package_id).first()
+
+
+def update_package(
+    db: Session,
+    package_id: int,
+    package_update: schemas.PackageUpdate,
+):
+    """Update a package."""
+    package = get_package(db, package_id)
+    if not package:
+        return None
+
+    update_data = package_update.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(package, field, value)
+
+    db.commit()
+    db.refresh(package)
+    return package
+
+
+def delete_package(db: Session, package_id: int):
+    """Soft delete a package by setting is_active to False."""
+    package = get_package(db, package_id)
+    if not package:
+        return None
+
+    package.is_active = False
+    db.commit()
+    return package
