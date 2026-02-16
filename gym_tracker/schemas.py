@@ -13,6 +13,8 @@ class SessionBase(BaseModel):
 class SessionCreate(BaseModel):
     duration_minutes: int
     trainer: str
+    num_people: int = 1
+    partner_email: str | None = None
 
     @field_validator('trainer')
     @classmethod
@@ -21,10 +23,23 @@ class SessionCreate(BaseModel):
             raise ValueError('Trainer name is required and cannot be empty')
         return v.strip()
 
+    @field_validator('partner_email')
+    @classmethod
+    def validate_partner_email(cls, v):
+        if v is not None:
+            v = v.strip().lower()
+            if not v:
+                return None
+        return v
+
 class Session(SessionBase):
     id: int
     purchase_id: int
     purchase_exhausted: bool = False
+    partner_email: str | None = None
+    partner_name: str | None = None
+    num_people: int = 1
+    is_owner: bool = True
     model_config = {
         "from_attributes": True
     }
@@ -39,13 +54,27 @@ class PurchaseBase(BaseModel):
     cost: float = 0.0
 
 class PurchaseCreate(PurchaseBase):
-    pass
+    num_people: int = 1
+    partner_email: str | None = None
+
+    @field_validator('partner_email')
+    @classmethod
+    def validate_partner_email(cls, v):
+        if v is not None:
+            v = v.strip().lower()
+            if not v:
+                return None
+        return v
 
 class Purchase(PurchaseBase):
     id: int
     total_sessions: int
     sessions_remaining: int
     purchase_date: datetime
+    num_people: int = 1
+    partner_email: str | None = None
+    partner_name: str | None = None
+    is_owner: bool = True
 
     model_config = {
         "from_attributes": True

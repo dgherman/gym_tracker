@@ -39,8 +39,8 @@ class User(Base):
     last_login_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     # Backrefs for convenience (purely optional)
-    logged_purchases = relationship("Purchase", back_populates="logged_by_user")
-    created_sessions = relationship("Session", back_populates="created_by_user")
+    logged_purchases = relationship("Purchase", foreign_keys="[Purchase.logged_by_user_id]", back_populates="logged_by_user")
+    created_sessions = relationship("Session", foreign_keys="[Session.created_by_user_id]", back_populates="created_by_user")
 
     def __repr__(self) -> str:
         return f"<User id={self.id} email={self.email!r} sub={self.google_sub!r}>"
@@ -59,10 +59,16 @@ class Purchase(Base):
     sessions_remaining = Column(Integer)
     purchase_date = Column(DateTime, index=True)
     cost = Column(Float, default=0.0)
+    num_people = Column(Integer, nullable=False, default=1)
 
     # NEW: who logged this purchase (nullable for legacy rows)
     logged_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    logged_by_user = relationship("User", back_populates="logged_purchases")
+    logged_by_user = relationship("User", foreign_keys=[logged_by_user_id], back_populates="logged_purchases")
+
+    # Partner support
+    partner_email = Column(String(255), nullable=True)
+    partner_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    partner_user = relationship("User", foreign_keys=[partner_user_id])
 
     sessions = relationship("Session", back_populates="purchase")
 
@@ -94,7 +100,11 @@ class Session(Base):
 
     # NEW: who created/recorded this session (nullable for legacy rows)
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_by_user = relationship("User", back_populates="created_sessions")
+    created_by_user = relationship("User", foreign_keys=[created_by_user_id], back_populates="created_sessions")
+
+    # Partner for this specific session (overrides purchase default)
+    partner_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    partner_user = relationship("User", foreign_keys=[partner_user_id])
 
     purchase = relationship("Purchase", back_populates="sessions")
     trainer_rel = relationship("Trainer", back_populates="sessions")

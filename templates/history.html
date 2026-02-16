@@ -150,19 +150,30 @@
           const local = parseUTC(s.session_date);
           const label = formatNoSeconds(local);
           // Build local iso for picker
-          const dtLocal = 
+          const dtLocal =
             local.getFullYear() + '-' +
             pad(local.getMonth()+1) + '-' +
             pad(local.getDate()) + 'T' +
             pad(local.getHours()) + ':' +
             pad(local.getMinutes());
 
+          let partnerBadge = '';
+          if (s.num_people >= 2 && s.partner_name) {
+            partnerBadge = ` <span class="badge bg-info">with ${s.partner_name}</span>`;
+          }
+          if (!s.is_owner) {
+            partnerBadge += ' <span class="badge bg-secondary">Shared</span>';
+          }
+
+          const canEdit = s.is_owner !== false;
+
           html += `
             <li class="list-group-item d-flex justify-content-between align-items-center small" id="session-card-${s.id}">
               <span class="flex-grow-1 text-wrap">
-                ${label} — ${s.duration_minutes} min with ${s.trainer}
+                ${label} — ${s.duration_minutes} min with ${s.trainer}${partnerBadge}
               </span>
               <span class="d-flex gap-1">
+                ${canEdit ? `
                 <button class="btn btn-sm btn-outline-primary action-btn py-0 px-2"
                         data-bs-toggle="modal" data-bs-target="#editSessionModal"
                         data-id="${s.id}"
@@ -173,6 +184,7 @@
                 </button>
                 <button class="btn btn-sm btn-outline-danger action-btn py-0 px-2"
                         onclick="confirmDelete('session', ${s.id})">Delete</button>
+                ` : ''}
               </span>
             </li>`;
         });
@@ -187,16 +199,33 @@
         purchases.forEach(p => {
           const local = parseUTC(p.purchase_date);
           const label = formatNoSeconds(local);
+
+          let partnerBadge = '';
+          if (p.num_people >= 2 && p.partner_name) {
+            partnerBadge = ` <span class="badge bg-info">Partner: ${p.partner_name}</span>`;
+          }
+
+          let costLabel = '';
+          if (p.is_owner === false) {
+            costLabel = ' <span class="badge bg-secondary">Shared with you</span>';
+          } else if (p.cost > 0) {
+            costLabel = ` <small class="text-muted">$${p.cost.toFixed(2)}</small>`;
+          }
+
+          const canDelete = p.is_owner !== false;
+
           html += `
             <li class="list-group-item d-flex justify-content-between align-items-center small" id="purchase-card-${p.id}">
               <span class="flex-grow-1 text-wrap">
-                ${label} — ${p.duration_minutes}-min ${p.total_sessions} sessions pack <small>(${p.sessions_remaining} left)</small>
+                ${label} — ${p.duration_minutes}-min ${p.total_sessions} sessions pack <small>(${p.sessions_remaining} left)</small>${partnerBadge}${costLabel}
               </span>
               <span>
+                ${canDelete ? `
                 <button class="btn btn-sm btn-outline-danger action-btn py-0 px-2"
                         onclick="confirmDelete('purchase', ${p.id})">
                   Delete
                 </button>
+                ` : ''}
               </span>
             </li>`;
         });

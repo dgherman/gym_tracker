@@ -98,6 +98,17 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
+    # Auto-link any purchases where this user's email was set as partner
+    if email:
+        unlinked = db.query(models.Purchase).filter(
+            models.Purchase.partner_email == email,
+            models.Purchase.partner_user_id.is_(None),
+        ).all()
+        for purchase in unlinked:
+            purchase.partner_user_id = user.id
+        if unlinked:
+            db.commit()
+
     # Store only user_id in the signed session cookie (set via SessionMiddleware in main.py)
     request.session["user_id"] = user.id
 

@@ -50,6 +50,14 @@
     </div>
   </div>
 
+  <div class="row">
+    <!-- Minutes by partner pie -->
+    <div class="col-md-6 mb-4 chart-container">
+      <h5>Minutes by Training Partner</h5>
+      <canvas id="partnerChart"></canvas>
+    </div>
+  </div>
+
   <a href="/" class="btn btn-secondary mt-4">Back</a>
 
   <script>
@@ -82,7 +90,7 @@
     });
 
     // Chart.js instances
-    let trainingChart, durationChart;
+    let trainingChart, durationChart, partnerChart;
     function initCharts() {
       const tctx = document.getElementById('trainingChart').getContext('2d');
       trainingChart = new Chart(tctx, {
@@ -93,6 +101,13 @@
 
       const dctx = document.getElementById('durationChart').getContext('2d');
       durationChart = new Chart(dctx, {
+        type: 'pie',
+        data: { labels: [], datasets: [{ data: [], backgroundColor: [] }] },
+        options: { responsive: true }
+      });
+
+      const pctx = document.getElementById('partnerChart').getContext('2d');
+      partnerChart = new Chart(pctx, {
         type: 'pie',
         data: { labels: [], datasets: [{ data: [], backgroundColor: [] }] },
         options: { responsive: true }
@@ -144,7 +159,8 @@
       const {
         training,
         total_cost,
-        total_minutes_by_duration
+        total_minutes_by_duration,
+        minutes_by_partner
       } = await res.json();
 
       // Total cost
@@ -173,6 +189,17 @@
       durationChart.data.datasets[0].data = durData;
       durationChart.data.datasets[0].backgroundColor = durColors;
       durationChart.update();
+
+      // Minutes by Partner chart
+      const partnerLabels = (minutes_by_partner || []).map(p => p.partner);
+      const partnerData   = (minutes_by_partner || []).map(p => p.minutes);
+      const partnerColors = partnerLabels.map(name =>
+        name === 'Solo' ? '#6c757d' : generateTrainerColor(name)
+      );
+      partnerChart.data.labels = partnerLabels;
+      partnerChart.data.datasets[0].data = partnerData;
+      partnerChart.data.datasets[0].backgroundColor = partnerColors;
+      partnerChart.update();
     }
   </script>
 </body>

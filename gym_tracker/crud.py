@@ -1,10 +1,99 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from gym_tracker import models, schemas
+
+
+def _user_purchase_filter(user_id: int):
+    """Filter purchases where user is owner OR partner."""
+    return or_(
+        models.Purchase.logged_by_user_id == user_id,
+        models.Purchase.partner_user_id == user_id,
+    )
+
+
+def _user_session_ids(db: Session, user_id: int, start=None, end=None):
+    """Subquery returning distinct session IDs visible to a user."""
+    q = (
+        db.query(models.Session.id)
+        .outerjoin(models.Purchase, models.Session.purchase_id == models.Purchase.id)
+        .filter(or_(
+            models.Session.created_by_user_id == user_id,
+            models.Session.partner_user_id == user_id,
+            models.Purchase.partner_user_id == user_id,
+            models.Purchase.logged_by_user_id == user_id,
+        ))
+    )
+    if start:
+        q = q.filter(models.Session.session_date >= start)
+    if end:
+        q = q.filter(models.Session.session_date <= end)
+    return q.distinct().subquery()
+
+
+def _resolve_partner(db: Session, partner_email: Optional[str]) -> Optional[int]:
+    """Look up a user by email. Returns user ID or None."""
+    if not partner_email:
+        return None
+    user = db.query(models.User).filter(
+        models.User.email == partner_email.lower().strip()
+    ).first()
+    return user.id if user else None
+
+
+def _annotate_purchases(db, purchases, user_id: int):
+    """Add is_owner, partner_name, and adjust cost for partner views.
+    partner_name always shows the OTHER person, not yourself."""
+    for p in purchases:
+        is_owner = (p.logged_by_user_id == user_id)
+        p.is_owner = is_owner
+        # Show the other person's name, not your own
+        if is_owner:
+            if p.partner_user_id and hasattr(p, 'partner_user') and p.partner_user:
+                p.partner_name = p.partner_user.full_name or p.partner_user.email
+            elif p.partner_email:
+                p.partner_name = p.partner_email
+        else:
+            if p.logged_by_user_id and hasattr(p, 'logged_by_user') and p.logged_by_user:
+                p.partner_name = p.logged_by_user.full_name or p.logged_by_user.email
+            # Expunge from session before mutating cost to prevent DB flush
+            db.expunge(p)
+            p.cost = 0.0
+
+
+def _annotate_session(sess, purchase, user_id: int):
+    """Add partner_email, partner_name, num_people, is_owner to a session.
+    partner_name always shows the OTHER person, not yourself."""
+    sess.is_owner = (sess.created_by_user_id == user_id)
+    sess.num_people = purchase.num_people if purchase else 1
+
+    if not purchase or purchase.num_people <= 1:
+        return
+
+    # Per-session partner override: show that person (unless it's you)
+    if sess.partner_user_id and hasattr(sess, 'partner_user') and sess.partner_user:
+        if sess.partner_user_id != user_id:
+            sess.partner_name = sess.partner_user.full_name or sess.partner_user.email
+            sess.partner_email = sess.partner_user.email
+            return
+
+    # Fall back to purchase-level partner/owner — show the OTHER person
+    # If I'm the purchaser, show the partner. If I'm the partner, show the purchaser.
+    is_purchaser = (purchase.logged_by_user_id == user_id)
+    if is_purchaser:
+        if purchase.partner_user_id and hasattr(purchase, 'partner_user') and purchase.partner_user:
+            sess.partner_name = purchase.partner_user.full_name or purchase.partner_user.email
+            sess.partner_email = purchase.partner_user.email
+        elif purchase.partner_email:
+            sess.partner_name = purchase.partner_email
+            sess.partner_email = purchase.partner_email
+    else:
+        if purchase.logged_by_user_id and hasattr(purchase, 'logged_by_user') and purchase.logged_by_user:
+            sess.partner_name = purchase.logged_by_user.full_name or purchase.logged_by_user.email
+            sess.partner_email = purchase.logged_by_user.email
 
 # --------------------
 # Purchase CRUD
@@ -21,14 +110,20 @@ def create_purchase(
       - duration_minutes and cost come from the schema
       - total_sessions and sessions_remaining default to 10
       - logged_by_user_id (optional) links the row to the actor
+      - partner_email / num_people for 2-person packages
     """
+    partner_user_id = _resolve_partner(db, purchase_in.partner_email)
+
     db_purchase = models.Purchase(
         duration_minutes=purchase_in.duration_minutes,
         total_sessions=10,
         sessions_remaining=10,
         cost=purchase_in.cost,
         purchase_date=datetime.now(timezone.utc),
-        logged_by_user_id=logged_by_user_id,  # NEW
+        logged_by_user_id=logged_by_user_id,
+        num_people=purchase_in.num_people,
+        partner_email=purchase_in.partner_email,
+        partner_user_id=partner_user_id,
     )
     db.add(db_purchase)
     db.commit()
@@ -45,13 +140,16 @@ def get_purchases(
 ):
     q = db.query(models.Purchase)
     if user_id is not None:
-        q = q.filter(models.Purchase.logged_by_user_id == user_id)
-    return (
+        q = q.filter(_user_purchase_filter(user_id))
+    purchases = (
         q.order_by(models.Purchase.purchase_date.desc())
          .offset(skip)
          .limit(limit)
          .all()
     )
+    if user_id is not None:
+        _annotate_purchases(db, purchases, user_id)
+    return purchases
 
 
 def get_purchases_history(
@@ -63,27 +161,38 @@ def get_purchases_history(
 ):
     q = db.query(models.Purchase)
     if user_id is not None:
-        q = q.filter(models.Purchase.logged_by_user_id == user_id)
+        q = q.filter(_user_purchase_filter(user_id))
     if start:
         q = q.filter(models.Purchase.purchase_date >= start)
     if end:
         q = q.filter(models.Purchase.purchase_date <= end)
-    return q.order_by(models.Purchase.purchase_date.desc()).all()
+    purchases = q.order_by(models.Purchase.purchase_date.desc()).all()
+    if user_id is not None:
+        _annotate_purchases(db, purchases, user_id)
+    return purchases
 
 
 def get_summary(db: Session, *, user_id: Optional[int] = None):
     """
-    Returns a dict mapping duration -> total remaining sessions
-    scoped to the given user (if provided).
+    Returns a list of dicts with duration, num_people, remaining
+    scoped to the given user (if provided). Includes partner purchases.
+    Groups by (duration_minutes, num_people) to distinguish package types.
     """
     q = db.query(
         models.Purchase.duration_minutes,
+        models.Purchase.num_people,
         func.sum(models.Purchase.sessions_remaining),
     )
     if user_id is not None:
-        q = q.filter(models.Purchase.logged_by_user_id == user_id)
-    results = q.group_by(models.Purchase.duration_minutes).all()
-    return {duration: int(remaining) for duration, remaining in results}
+        q = q.filter(_user_purchase_filter(user_id))
+    results = q.group_by(
+        models.Purchase.duration_minutes,
+        models.Purchase.num_people,
+    ).all()
+    return [
+        {"duration": duration, "num_people": num_people, "remaining": int(remaining)}
+        for duration, num_people, remaining in results
+    ]
 
 
 # --------------------
@@ -96,11 +205,13 @@ def create_session(
     trainer: str,
     *,
     created_by_user_id: Optional[int] = None,
+    partner_email: Optional[str] = None,
+    num_people: int = 1,
 ):
     """
     Creates a session by consuming one matching purchase (oldest first),
     and records who created it (created_by_user_id).
-    Only consumes from THIS user's packs when a user_id is provided.
+    Consumes from user's own packs or packs where they are partner.
     """
     # Validate trainer is not empty
     if not trainer or not trainer.strip():
@@ -109,16 +220,22 @@ def create_session(
         db.query(models.Purchase)
         .filter(
             models.Purchase.duration_minutes == duration_minutes,
+            models.Purchase.num_people == num_people,
             models.Purchase.sessions_remaining > 0,
         )
         .order_by(models.Purchase.purchase_date)
     )
     if created_by_user_id is not None:
-        pack_q = pack_q.filter(models.Purchase.logged_by_user_id == created_by_user_id)
+        pack_q = pack_q.filter(_user_purchase_filter(created_by_user_id))
 
     purchase = pack_q.first()
     if not purchase:
         raise ValueError("No available purchase with remaining sessions for this duration")
+
+    # Resolve per-session partner override
+    session_partner_id = None
+    if partner_email:
+        session_partner_id = _resolve_partner(db, partner_email)
 
     purchase.sessions_remaining -= 1
     db_session = models.Session(
@@ -126,7 +243,8 @@ def create_session(
         duration_minutes=duration_minutes,
         trainer=trainer,
         session_date=datetime.now(timezone.utc),
-        created_by_user_id=created_by_user_id,  # NEW
+        created_by_user_id=created_by_user_id,
+        partner_user_id=session_partner_id,
     )
     db.add(db_session)
     db.commit()
@@ -134,6 +252,8 @@ def create_session(
 
     # Expose whether that purchase is now exhausted
     db_session.purchase_exhausted = (purchase.sessions_remaining == 0)
+    # Annotate partner info for response
+    _annotate_session(db_session, purchase, created_by_user_id)
     return db_session
 
 
@@ -146,7 +266,8 @@ def get_sessions(
 ):
     q = db.query(models.Session)
     if user_id is not None:
-        q = q.filter(models.Session.created_by_user_id == user_id)
+        visible_ids = _user_session_ids(db, user_id, start, end)
+        q = q.filter(models.Session.id.in_(select(visible_ids.c.id)))
     if start:
         q = q.filter(models.Session.session_date >= start)
     if end:
@@ -155,6 +276,8 @@ def get_sessions(
     for sess in sessions:
         purchase = db.get(models.Purchase, sess.purchase_id)
         sess.purchase_exhausted = (purchase.sessions_remaining == 0)
+        if user_id is not None:
+            _annotate_session(sess, purchase, user_id)
     return sessions
 
 
@@ -172,6 +295,7 @@ def get_training_by_trainer(
     """
     Returns list of tuples: (trainer, total_minutes)
     for sessions between start and end, scoped by user if provided.
+    Includes sessions where user is creator or partner.
     """
     q = db.query(
         models.Session.trainer,
@@ -181,8 +305,85 @@ def get_training_by_trainer(
         models.Session.session_date <= end,
     )
     if user_id is not None:
-        q = q.filter(models.Session.created_by_user_id == user_id)
+        visible_ids = _user_session_ids(db, user_id, start, end)
+        q = q.filter(models.Session.id.in_(select(visible_ids.c.id)))
     return q.group_by(models.Session.trainer).all()
+
+
+def get_total_minutes_by_duration(
+    db: Session,
+    start: datetime,
+    end: datetime,
+    *,
+    user_id: Optional[int] = None,
+):
+    """
+    Returns list of tuples: (duration_minutes, total_minutes)
+    for sessions between start and end, scoped by user.
+    """
+    q = db.query(
+        models.Session.duration_minutes,
+        func.sum(models.Session.duration_minutes),
+    ).filter(
+        models.Session.session_date >= start,
+        models.Session.session_date <= end,
+    )
+    if user_id is not None:
+        visible_ids = _user_session_ids(db, user_id, start, end)
+        q = q.filter(models.Session.id.in_(select(visible_ids.c.id)))
+    return q.group_by(models.Session.duration_minutes).all()
+
+
+def get_minutes_by_partner(
+    db: Session,
+    start: datetime,
+    end: datetime,
+    *,
+    user_id: int,
+):
+    """
+    Returns list of dicts: {partner: name_or_Solo, minutes: int}
+    breaking down training minutes by who the user trained with.
+    """
+    visible_ids = _user_session_ids(db, user_id, start, end)
+    sessions = (
+        db.query(models.Session)
+        .filter(models.Session.id.in_(select(visible_ids.c.id)))
+        .all()
+    )
+
+    by_partner = {}
+    for sess in sessions:
+        purchase = db.get(models.Purchase, sess.purchase_id)
+        num_people = purchase.num_people if purchase else 1
+
+        if num_people <= 1:
+            partner_label = "Solo"
+        else:
+            # Determine who the other person is
+            partner_label = None
+            # Per-session partner override
+            if sess.partner_user_id and sess.partner_user_id != user_id:
+                u = sess.partner_user
+                if u:
+                    partner_label = u.full_name or u.email
+            # Fall back to purchase-level
+            if not partner_label and purchase:
+                is_purchaser = (purchase.logged_by_user_id == user_id)
+                if is_purchaser:
+                    if purchase.partner_user_id and purchase.partner_user:
+                        partner_label = purchase.partner_user.full_name or purchase.partner_user.email
+                    elif purchase.partner_email:
+                        partner_label = purchase.partner_email
+                else:
+                    if purchase.logged_by_user_id and purchase.logged_by_user:
+                        partner_label = purchase.logged_by_user.full_name or purchase.logged_by_user.email
+            if not partner_label:
+                partner_label = "Partner (unknown)"
+
+        by_partner[partner_label] = by_partner.get(partner_label, 0) + sess.duration_minutes
+
+    return [{"partner": k, "minutes": v} for k, v in by_partner.items()]
 
 
 def get_total_cost(

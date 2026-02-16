@@ -56,6 +56,11 @@
               <!-- Options will be populated dynamically -->
             </select>
           </div>
+          <div class="mb-3 d-none" id="sessionPartnerGroup">
+            <label for="sessionPartnerEmail" class="form-label">Partner Email</label>
+            <input type="email" id="sessionPartnerEmail" class="form-control" placeholder="partner@example.com">
+            <div class="form-text">Optional. If left empty, the partner from the purchased package will be used.</div>
+          </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -84,6 +89,11 @@
           <div id="packageDetails" class="alert alert-info d-none">
             <strong>Package Details:</strong>
             <div id="packageDetailsContent"></div>
+          </div>
+          <div class="mb-3 d-none" id="purchasePartnerGroup">
+            <label for="purchasePartnerEmail" class="form-label">Partner Email</label>
+            <input type="email" id="purchasePartnerEmail" class="form-control" placeholder="partner@example.com">
+            <div class="form-text">Email of your training partner for this 2-person package</div>
           </div>
         </div>
         <div class="modal-footer">
@@ -130,18 +140,23 @@
     }
 
     // Populate session package dropdown (only packages with remaining sessions)
+    let latestSummary = [];
     async function populateSessionPackages() {
       try {
         const res = await fetch('/summary/');
-        const summary = await res.json();
+        latestSummary = await res.json();
 
         const select = document.getElementById('sessionPackageSelect');
         const options = ['<option value="">-- Select a package --</option>'];
 
         for (const pkg of allPackages) {
-          const remaining = summary[pkg.duration_minutes] || 0;
+          // Find matching summary entry by duration AND num_people
+          const entry = latestSummary.find(s =>
+            s.duration === pkg.duration_minutes && s.num_people === pkg.num_people
+          );
+          const remaining = entry ? entry.remaining : 0;
           if (remaining > 0) {
-            options.push(`<option value="${pkg.duration_minutes}">
+            options.push(`<option value="${pkg.duration_minutes}" data-num-people="${pkg.num_people}">
               ${pkg.name} (${remaining} sessions remaining)
             </option>`);
           }
@@ -186,32 +201,54 @@
             </ul>
           `;
           document.getElementById('packageDetails').classList.remove('d-none');
+          // Show partner email field for 2+ person packages
+          const partnerGroup = document.getElementById('purchasePartnerGroup');
+          if (pkg.num_people >= 2) {
+            partnerGroup.classList.remove('d-none');
+          } else {
+            partnerGroup.classList.add('d-none');
+            document.getElementById('purchasePartnerEmail').value = '';
+          }
         }
       } else {
         selectedPackageForPurchase = null;
         document.getElementById('packageDetails').classList.add('d-none');
+        document.getElementById('purchasePartnerGroup').classList.add('d-none');
       }
     });
 
     // Render the summary alerts
     async function refreshSummary() {
       try {
-        const res = await fetch('/summary/');
-        const data = await res.json();
-        document.getElementById('summary').innerHTML = Object.entries(data)
-          .map(([duration, remaining]) => `
-            <div class="alert ${remaining === 0 ? 'alert-danger' : 'alert-info'}">
-              Duration ${duration}-min: ${remaining} left
-            </div>
-          `).join('');
-
-        // Refresh session package dropdown when summary changes
         await populateSessionPackages();
+        const data = latestSummary;
+        document.getElementById('summary').innerHTML = data
+          .map(entry => {
+            const peopleLabel = entry.num_people > 1 ? ` (${entry.num_people} persons)` : '';
+            return `
+              <div class="alert ${entry.remaining === 0 ? 'alert-danger' : 'alert-info'}">
+                Duration ${entry.duration}-min${peopleLabel}: ${entry.remaining} left
+              </div>
+            `;
+          }).join('');
       } catch (err) {
         console.error("refreshSummary error:", err);
         document.getElementById('summary').textContent = 'Error loading remaining sessions';
       }
     }
+
+    // Show/hide partner field based on selected session package
+    document.getElementById('sessionPackageSelect').addEventListener('change', (e) => {
+      const selected = e.target.selectedOptions[0];
+      const numPeople = parseInt(selected?.dataset.numPeople || '1');
+      const partnerGroup = document.getElementById('sessionPartnerGroup');
+      if (numPeople >= 2) {
+        partnerGroup.classList.remove('d-none');
+      } else {
+        partnerGroup.classList.add('d-none');
+        document.getElementById('sessionPartnerEmail').value = '';
+      }
+    });
 
     // Show log session modal
     document.getElementById('logSessionBtn').addEventListener('click', () => {
@@ -222,13 +259,18 @@
     document.getElementById('buyPackageBtn').addEventListener('click', () => {
       selectedPackageForPurchase = null;
       document.getElementById('packageDetails').classList.add('d-none');
+      document.getElementById('purchasePartnerGroup').classList.add('d-none');
+      document.getElementById('purchasePartnerEmail').value = '';
       purchasePackageModal.show();
     });
 
     // Confirm and log session
     document.getElementById('confirmLogSession').addEventListener('click', async () => {
-      const durationMinutes = parseInt(document.getElementById('sessionPackageSelect').value);
+      const select = document.getElementById('sessionPackageSelect');
+      const durationMinutes = parseInt(select.value);
       const trainer = document.getElementById('modalTrainerSelect').value;
+      const partnerEmail = document.getElementById('sessionPartnerEmail').value.trim();
+      const numPeople = parseInt(select.selectedOptions[0]?.dataset.numPeople || '1');
 
       if (!durationMinutes || !trainer) {
         alert('Please select both a package and a trainer');
@@ -237,10 +279,15 @@
 
       logSessionModal.hide();
 
+      const payload = { duration_minutes: durationMinutes, trainer, num_people: numPeople };
+      if (partnerEmail) {
+        payload.partner_email = partnerEmail;
+      }
+
       const res = await fetch('/sessions/', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ duration_minutes: durationMinutes, trainer })
+        body: JSON.stringify(payload)
       });
 
       const notif = document.getElementById('notification');
@@ -264,17 +311,31 @@
         return;
       }
 
+      const partnerEmail = document.getElementById('purchasePartnerEmail').value.trim();
+
+      // Require partner email for 2-person packages
+      if (selectedPackageForPurchase.num_people >= 2 && !partnerEmail) {
+        alert('Please enter your partner\'s email for this 2-person package');
+        return;
+      }
+
       purchasePackageModal.hide();
 
       const totalCost = selectedPackageForPurchase.price_per_session * selectedPackageForPurchase.total_sessions;
 
+      const payload = {
+        duration_minutes: selectedPackageForPurchase.duration_minutes,
+        cost: totalCost,
+        num_people: selectedPackageForPurchase.num_people
+      };
+      if (partnerEmail) {
+        payload.partner_email = partnerEmail;
+      }
+
       const res = await fetch('/purchases/', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({
-          duration_minutes: selectedPackageForPurchase.duration_minutes,
-          cost: totalCost
-        })
+        body: JSON.stringify(payload)
       });
 
       const notif = document.getElementById('notification');

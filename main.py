@@ -111,11 +111,16 @@ class MinutesByDuration(BaseModel):
     duration: int
     minutes: int
 
+class MinutesByPartner(BaseModel):
+    partner: str
+    minutes: int
+
 class ReportsData(BaseModel):
     training: List[dict]  # trainer → minutes
     total_cost: float
     cost_by_duration: List[CostByDuration]
     total_minutes_by_duration: List[MinutesByDuration]
+    minutes_by_partner: List[MinutesByPartner]
 
     model_config = {"from_attributes": True}
 
@@ -155,8 +160,8 @@ def terms_of_service(request: Request, db: Session = Depends(get_db)):
 # -------------------------------------------------------------
 # Summary endpoint (scoped)
 # -------------------------------------------------------------
-@app.get("/summary", response_model=dict)
-@app.get("/summary/", response_model=dict)
+@app.get("/summary")
+@app.get("/summary/")
 def summary(request: Request, db: Session = Depends(get_db)):
     user_id = request.session.get("user_id")
     return crud.get_summary(db, user_id=user_id)
@@ -176,7 +181,9 @@ def create_session(
             db,
             session_in.duration_minutes,
             session_in.trainer,
-            created_by_user_id=user_id,  # pass through
+            created_by_user_id=user_id,
+            partner_email=session_in.partner_email,
+            num_people=session_in.num_people,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -397,22 +404,15 @@ def reports_data(
         .all()
     )
 
-    minutes_results = (
-        db.query(models.Session.duration_minutes, func.sum(models.Session.duration_minutes))
-        .filter(
-            models.Session.session_date >= start,
-            models.Session.session_date <= end,
-        )
-        .filter(models.Session.created_by_user_id == user_id)  # scoped
-        .group_by(models.Session.duration_minutes)
-        .all()
-    )
+    minutes_results = crud.get_total_minutes_by_duration(db, start, end, user_id=user_id)
+    partner_results = crud.get_minutes_by_partner(db, start, end, user_id=user_id)
 
     return {
         "training": [{"trainer": t, "minutes": int(m)} for t, m in training],
         "total_cost": float(total_cost),
         "cost_by_duration": [{"duration": d, "cost": float(c)} for d, c in cost_results],
         "total_minutes_by_duration": [{"duration": d, "minutes": int(m)} for d, m in minutes_results],
+        "minutes_by_partner": partner_results,
     }
 
 
