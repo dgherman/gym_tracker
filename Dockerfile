@@ -21,5 +21,5 @@ COPY . .
 # Expose port for Uvicorn
 EXPOSE 8000
 
-# Default command to run
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run migrations then start the server
+CMD ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"]
