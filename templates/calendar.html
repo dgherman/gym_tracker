@@ -128,6 +128,25 @@
     </div>
   </div>
 
+  <!-- Drag confirm modal -->
+  <div class="modal fade" id="dragConfirmModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Move Session?</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p id="dragConfirmMessage"></p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="dragConfirmCancel">Cancel</button>
+          <button type="button" class="btn btn-primary" id="dragConfirmOk">Move</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Recurrence scope modal (reschedule / cancel) -->
   <div class="modal fade" id="scopeModal" tabindex="-1">
     <div class="modal-dialog modal-sm">
@@ -234,10 +253,13 @@
       const footer = document.getElementById('eventModalFooter');
       footer.innerHTML = '';
       if (IS_TRAINER && p.status === 'scheduled') {
-        footer.innerHTML += `<button class="btn btn-success" onclick="doComplete(${event.id})">Mark Complete</button> `;
         const startIso = event.start.toISOString().substring(0, 16);
+        footer.innerHTML += `<button class="btn btn-success" onclick="doComplete(${event.id})">Mark Complete</button> `;
         footer.innerHTML += `<button class="btn btn-warning" onclick="doReschedule(${event.id}, ${JSON.stringify(p.recurrence_group_id)}, '${startIso}')">Reschedule</button> `;
         footer.innerHTML += `<button class="btn btn-danger" onclick="doCancel(${event.id}, ${JSON.stringify(p.recurrence_group_id)})">Cancel</button>`;
+      } else if (IS_TRAINER && p.status === 'completed') {
+        const startIso = event.start.toISOString().substring(0, 16);
+        footer.innerHTML += `<button class="btn btn-secondary" onclick="doReschedule(${event.id}, ${JSON.stringify(p.recurrence_group_id)}, '${startIso}')">Modify</button>`;
       }
       eventModal.show();
     }
@@ -251,12 +273,33 @@
 
     // ---- Scope modal helper ----
     const scopeModal = IS_TRAINER ? new bootstrap.Modal(document.getElementById('scopeModal')) : null;
-    function withScope(title, message, callback) {
+    function withScope(title, message, callback, onCancel) {
       document.getElementById('scopeModalTitle').textContent = title;
       document.getElementById('scopeModalMessage').textContent = message;
-      document.getElementById('scopeThis').onclick = () => { scopeModal.hide(); callback('this'); };
-      document.getElementById('scopeFuture').onclick = () => { scopeModal.hide(); callback('future'); };
+      let chosen = false;
+      document.getElementById('scopeThis').onclick = () => { chosen = true; scopeModal.hide(); callback('this'); };
+      document.getElementById('scopeFuture').onclick = () => { chosen = true; scopeModal.hide(); callback('future'); };
+      if (onCancel) {
+        document.getElementById('scopeModal').addEventListener('hidden.bs.modal', function handler() {
+          document.getElementById('scopeModal').removeEventListener('hidden.bs.modal', handler);
+          if (!chosen) onCancel();
+        }, { once: true });
+      }
       scopeModal.show();
+    }
+
+    // ---- Drag confirm modal ----
+    const dragConfirmModal = IS_TRAINER ? new bootstrap.Modal(document.getElementById('dragConfirmModal')) : null;
+    function withDragConfirm(message, onConfirm, onCancel) {
+      document.getElementById('dragConfirmMessage').textContent = message;
+      let confirmed = false;
+      document.getElementById('dragConfirmOk').onclick = () => { confirmed = true; dragConfirmModal.hide(); onConfirm(); };
+      document.getElementById('dragConfirmCancel').onclick = () => { dragConfirmModal.hide(); };
+      document.getElementById('dragConfirmModal').addEventListener('hidden.bs.modal', function handler() {
+        document.getElementById('dragConfirmModal').removeEventListener('hidden.bs.modal', handler);
+        if (!confirmed) onCancel();
+      }, { once: true });
+      dragConfirmModal.show();
     }
 
     // ---- Cancel ----
@@ -318,6 +361,8 @@
       const sessionId = info.event.id;
       const groupId = info.event.extendedProps.recurrence_group_id;
       const newDate = info.event.start.toISOString();
+      const newDateLabel = info.event.start.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+
       const performReschedule = async (scope) => {
         const res = await fetch(`/api/sessions/${sessionId}/reschedule`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -326,10 +371,20 @@
         if (!res.ok) { info.revert(); }
         else { calendar.refetchEvents(); }
       };
+
       if (groupId) {
-        withScope('Reschedule Recurring Session', 'Move just this session, or this and all future sessions?', performReschedule);
+        withScope(
+          'Reschedule Recurring Session',
+          `Move to ${newDateLabel} — just this session, or this and all future sessions?`,
+          performReschedule,
+          () => info.revert()
+        );
       } else {
-        performReschedule('this');
+        withDragConfirm(
+          `Move to ${newDateLabel}?`,
+          () => performReschedule('this'),
+          () => info.revert()
+        );
       }
     }
   });
