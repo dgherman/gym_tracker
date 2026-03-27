@@ -51,7 +51,7 @@ def schedule_session(
         notes=notes,
         status="scheduled",
         recurrence_group_id=recurrence_group_id,
-        trainer=None,   # legacy field unused for scheduled sessions
+        trainer="",     # legacy NOT NULL field; unused for calendar-scheduled sessions
     )
     db.add(sess)
     db.commit()
