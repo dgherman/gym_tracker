@@ -43,11 +43,6 @@ class Settings:
     GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
     OAUTH_REDIRECT_URI: str = os.getenv("OAUTH_REDIRECT_URI", "http://localhost:8000/auth/callback")
     BASE_URL: str = os.getenv("BASE_URL", "http://localhost:8000")
-    ALLOWED_EMAILS: str = os.getenv("ALLOWED_EMAILS", "")
-
-    @property
-    def allowed_emails_set(self) -> set[str]:
-        return {e.strip().lower() for e in self.ALLOWED_EMAILS.split(",") if e.strip()}
 
     # Helpers
     @property

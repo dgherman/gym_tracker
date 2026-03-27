@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from gym_tracker.config import get_settings
 from gym_tracker.database import SessionLocal
-from gym_tracker import models  # expects a models.User (see migration notes below)
+from gym_tracker import models, invite_crud  # expects a models.User (see migration notes below)
 
 router = APIRouter()
 settings = get_settings()
@@ -43,17 +43,11 @@ async def login(request: Request):
 
 @router.get("/auth/callback")
 async def auth_callback(request: Request, db: Session = Depends(get_db)):
-    """
-    Google redirects here with a one-time code.
-    We exchange it for tokens, verify the ID token, and upsert the user.
-    """
     try:
         token = await oauth.google.authorize_access_token(request)
     except Exception as e:
-        # Common pitfall: redirect_uri mismatch or incorrect client secret
         raise HTTPException(status_code=401, detail=f"OAuth exchange failed: {e}")
 
-    # Prefer userinfo; Authlib also exposes ID token 'claims'
     userinfo = token.get("userinfo") or {}
     claims = {**token.get("claims", {}), **userinfo}
 
@@ -66,16 +60,15 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
     if not google_sub:
         raise HTTPException(status_code=401, detail="Missing Google subject (sub)")
 
-    # Optional allowlist (useful while testing)
-    allowed = settings.allowed_emails_set
-    if allowed and email not in allowed:
-        raise HTTPException(status_code=403, detail="Email not allowed")
+    # Invite-only: reject anyone not in user_invites
+    invite = invite_crud.get_invite_by_email(db, email) if email else None
+    if not invite:
+        raise HTTPException(status_code=403, detail="Access denied: you have not been invited.")
 
     # Upsert user by google_sub
     now = datetime.utcnow()
     user = db.query(models.User).filter(models.User.google_sub == google_sub).one_or_none()
     if user:
-        # Keep existing values if Google omits them
         user.email = email or user.email
         user.email_verified = email_verified
         user.full_name = full_name or user.full_name
@@ -88,17 +81,35 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
             email_verified=email_verified,
             full_name=full_name,
             avatar_url=avatar_url,
-            role="client",       # placeholder for future RBAC
+            role=invite.role,   # role comes from invite
             is_active=True,
             created_at=now,
             last_login_at=now,
         )
         db.add(user)
+        db.flush()  # get user.id before linking
+
+    # Accept invite on first login
+    if invite.accepted_at is None:
+        invite_crud.accept_invite(db, invite)
+
+    # Auto-link trainer record: invite.trainer_id takes priority
+    trainer = None
+    if invite.trainer_id:
+        trainer = db.get(models.Trainer, invite.trainer_id)
+    elif email:
+        trainer = (
+            db.query(models.Trainer)
+            .filter(models.Trainer.email == email, models.Trainer.user_id.is_(None))
+            .first()
+        )
+    if trainer and not trainer.user_id:
+        trainer.user_id = user.id
 
     db.commit()
     db.refresh(user)
 
-    # Auto-link any purchases where this user's email was set as partner
+    # Auto-link partner purchases (existing behavior)
     if email:
         unlinked = db.query(models.Purchase).filter(
             models.Purchase.partner_email == email,
@@ -109,10 +120,7 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
         if unlinked:
             db.commit()
 
-    # Store only user_id in the signed session cookie (set via SessionMiddleware in main.py)
     request.session["user_id"] = user.id
-
-    # Head home (or wherever you want post-login)
     return RedirectResponse(url=settings.BASE_URL)
 
 
