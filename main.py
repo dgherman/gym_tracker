@@ -137,24 +137,22 @@ def healthz():
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
-    return templates.TemplateResponse("index.html", {"request": request, "current_user": user})
+    return templates.TemplateResponse(request, "index.html", {"current_user": user})
 
 @app.get("/privacy", response_class=HTMLResponse)
 def privacy_policy(request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
-    return templates.TemplateResponse("privacy.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "privacy.html", {
         "current_user": user,
-        "last_updated": "September 29, 2025"
+        "last_updated": "September 29, 2025",
     })
 
 @app.get("/terms", response_class=HTMLResponse)
 def terms_of_service(request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
-    return templates.TemplateResponse("terms.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "terms.html", {
         "current_user": user,
-        "last_updated": "September 29, 2025"
+        "last_updated": "September 29, 2025",
     })
 
 # -------------------------------------------------------------
@@ -236,8 +234,8 @@ def history_page(request: Request, db: Session = Depends(get_db)):
     sessions = crud.get_sessions(db, user_id=request.session.get("user_id"))
     purchases = crud.get_purchases(db, user_id=request.session.get("user_id"))
     return templates.TemplateResponse(
-        "history.html",
-        {"request": request, "sessions": sessions, "purchases": purchases, "current_user": user},
+        request, "history.html",
+        {"sessions": sessions, "purchases": purchases, "current_user": user},
     )
 
 # -------------------------------------------------------------
@@ -380,7 +378,7 @@ def api_delete_purchase(
 @app.get("/reports", response_class=HTMLResponse)
 def reports_page(request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
-    return templates.TemplateResponse("reports.html", {"request": request, "current_user": user})
+    return templates.TemplateResponse(request, "reports.html", {"current_user": user})
 
 @app.get("/reports/data", response_model=ReportsData)
 def reports_data(
@@ -472,8 +470,8 @@ def admin_console(
 ):
     """Admin console main dashboard."""
     return templates.TemplateResponse(
-        "admin/index.html",
-        {"request": request, "current_user": admin_user}
+        request, "admin/index.html",
+        {"current_user": admin_user},
     )
 
 @app.get("/admin/trainers", response_class=HTMLResponse)
@@ -485,8 +483,8 @@ def admin_trainers(
     """Admin trainer management page."""
     trainers = crud.get_trainers(db, active_only=False)
     return templates.TemplateResponse(
-        "admin/trainers.html",
-        {"request": request, "current_user": admin_user, "trainers": trainers}
+        request, "admin/trainers.html",
+        {"current_user": admin_user, "trainers": trainers},
     )
 
 
@@ -543,6 +541,6 @@ def admin_packages(
     """Admin package management page."""
     packages = crud.get_packages(db, active_only=False)
     return templates.TemplateResponse(
-        "admin/packages.html",
-        {"request": request, "current_user": admin_user, "packages": packages}
+        request, "admin/packages.html",
+        {"current_user": admin_user, "packages": packages},
     )
