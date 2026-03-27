@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -66,7 +66,7 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=403, detail="Access denied: you have not been invited.")
 
     # Upsert user by google_sub
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     user = db.query(models.User).filter(models.User.google_sub == google_sub).one_or_none()
     if user:
         user.email = email or user.email
@@ -88,10 +88,9 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
         )
         db.add(user)
         db.flush()  # get user.id before linking
-
-    # Accept invite on first login
-    if invite.accepted_at is None:
-        invite_crud.accept_invite(db, invite)
+        # Accept invite on first login (new user only)
+        if invite.accepted_at is None:
+            invite_crud.accept_invite(db, invite)
 
     # Auto-link trainer record: invite.trainer_id takes priority
     trainer = None
@@ -142,7 +141,7 @@ async def me(request: Request, db: Session = Depends(get_db)):
     user_id = request.session.get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="Not logged in")
-    user = db.query(models.User).get(user_id)
+    user = db.get(models.User, user_id)
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="Not logged in")
     return {
