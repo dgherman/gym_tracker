@@ -75,8 +75,10 @@
             <span style="opacity:.7">{{ current_user.email or "no-email" }}</span>
           </div>
         </div>
+        <a class="gt-admin-link" href="/calendar" style="background:#0891b2">Calendar</a>
         {% if current_user.role == "admin" %}
           <a class="gt-admin-link" href="/admin">Admin Console</a>
+          <a class="gt-admin-link" href="/admin/invites">Invites</a>
         {% endif %}
         <a class="gt-logout" href="/logout">Logout</a>
       {% else %}
