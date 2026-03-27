@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Optional
 
 from dateutil.relativedelta import relativedelta
@@ -104,7 +104,7 @@ def schedule_recurring(
     Credits are reserved immediately for each generated session.
     Returns (sessions_list, group).
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     horizon_date = (now + relativedelta(months=HORIZON_MONTHS)).date()
 
     group = models.RecurrenceGroup(
@@ -147,7 +147,7 @@ def extend_horizon(db: Session, group: models.RecurrenceGroup) -> list[models.Se
     Extend a recurrence group's sessions through now+3 months if needed.
     Returns newly created sessions (empty list if nothing to do).
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     target_horizon = (now + relativedelta(months=HORIZON_MONTHS)).date()
     current_horizon = group.horizon_through.date()
 
@@ -263,13 +263,14 @@ def reschedule_session(
         return [sess]
 
     # scope == "future"
-    delta = new_date - sess.session_date
+    original_date = sess.session_date          # save before modifying
+    delta = new_date - original_date
     rescheduled = [sess]
     sess.session_date = new_date
 
     if sess.recurrence_group_id:
         group_id = sess.recurrence_group_id
-        pivot_date = sess.session_date - delta  # original date before update
+        pivot_date = original_date             # clearly the original date
         future_siblings = (
             db.query(models.Session)
             .filter(
@@ -349,7 +350,7 @@ def get_calendar_events(
         db.query(models.RecurrenceGroup)
         .filter(
             models.RecurrenceGroup.horizon_through
-            < datetime.utcnow() + relativedelta(months=HORIZON_MONTHS)
+            < datetime.now(timezone.utc) + relativedelta(months=HORIZON_MONTHS)
         )
         .all()
     )
