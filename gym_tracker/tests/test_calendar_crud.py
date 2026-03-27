@@ -211,9 +211,9 @@ def test_get_calendar_events_trainer_sees_all(db):
         db, start=start, end=end, viewer_role="trainer", viewer_user_id=db._trainer_user_id
     )
     assert len(events) >= 1
-    # Trainer view titles include client name context
+    # Trainer view titles: "client · trainer"
     for e in events:
-        assert "Session #" in e["title"]
+        assert "\u00b7" in e["title"]
 
 
 def test_get_calendar_events_client_sees_own_only(db):

@@ -311,9 +311,9 @@ def _session_to_event(sess: models.Session, viewer_role: str) -> dict:
     )
 
     if viewer_role in ("trainer", "admin"):
-        title = f"Session #{sess.id} \u00b7 {client_name}"
+        title = f"{client_name} \u00b7 {trainer_name}"
     else:
-        title = f"Session #{sess.id} \u00b7 {trainer_name}"
+        title = f"{trainer_name}"
 
     return {
         "id": str(sess.id),
