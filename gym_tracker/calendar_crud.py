@@ -171,7 +171,7 @@ def extend_horizon(db: Session, group: models.RecurrenceGroup) -> list[models.Se
             session_date=datetime.combine(d, group.time_of_day),
             duration_minutes=group.duration_minutes,
             purchase_id=group.purchase_id,
-            scheduled_by_user_id=group.trainer_id,   # system-generated extension
+            scheduled_by_user_id=group.trainer.user_id if group.trainer and group.trainer.user_id else None,
             recurrence_group_id=group.id,
         )
         new_sessions.append(sess)
@@ -276,6 +276,7 @@ def reschedule_session(
             .filter(
                 models.Session.recurrence_group_id == group_id,
                 models.Session.session_date >= pivot_date,
+                models.Session.status == "scheduled",
                 models.Session.id != sess.id,
             )
             .all()
