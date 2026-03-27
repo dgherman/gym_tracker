@@ -34,7 +34,7 @@ class SessionCreate(BaseModel):
 
 class Session(SessionBase):
     id: int
-    purchase_id: int
+    purchase_id: int | None = None
     purchase_exhausted: bool = False
     partner_email: str | None = None
     partner_name: str | None = None
@@ -215,3 +215,81 @@ class Package(PackageBase):
     model_config = {
         "from_attributes": True
     }
+
+
+# --------------------
+# Calendar / Scheduling Schemas
+# --------------------
+
+class ScheduleSessionRequest(BaseModel):
+    trainer_id: int
+    client_user_id: int
+    session_date: datetime
+    duration_minutes: int
+    purchase_id: int | None = None
+    recurring: bool = False
+    frequency: str | None = None   # "weekly" | "biweekly" | "monthly"
+    notes: str | None = None
+
+    @field_validator("frequency")
+    @classmethod
+    def validate_frequency(cls, v):
+        if v is not None and v not in ("weekly", "biweekly", "monthly"):
+            raise ValueError("frequency must be weekly, biweekly, or monthly")
+        return v
+
+
+class RescheduleRequest(BaseModel):
+    new_date: datetime
+    scope: str  # "this" | "future"
+
+    @field_validator("scope")
+    @classmethod
+    def validate_scope(cls, v):
+        if v not in ("this", "future"):
+            raise ValueError("scope must be 'this' or 'future'")
+        return v
+
+
+class CancelRequest(BaseModel):
+    scope: str  # "this" | "future"
+
+    @field_validator("scope")
+    @classmethod
+    def validate_scope(cls, v):
+        if v not in ("this", "future"):
+            raise ValueError("scope must be 'this' or 'future'")
+        return v
+
+
+# --------------------
+# Invite Schemas
+# --------------------
+
+class InviteCreate(BaseModel):
+    email: str
+    role: str
+    trainer_id: int | None = None
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v):
+        if v not in ("client", "trainer", "admin"):
+            raise ValueError("role must be client, trainer, or admin")
+        return v
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v):
+        return v.strip().lower()
+
+
+class InviteOut(BaseModel):
+    id: int
+    email: str
+    role: str
+    trainer_id: int | None = None
+    accepted_at: datetime | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
