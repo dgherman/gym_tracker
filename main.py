@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from gym_tracker import crud, models, schemas
+from gym_tracker import calendar_crud, crud, invite_crud, models, schemas
 from gym_tracker.auth import router as auth_router
 from gym_tracker.config import get_settings
 from gym_tracker.database import SessionLocal, engine
@@ -93,6 +93,15 @@ def require_admin(request: Request, db: Session = Depends(get_db)) -> models.Use
         raise HTTPException(status_code=401, detail="Authentication required")
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+def require_trainer(request: Request, db: Session = Depends(get_db)) -> models.User:
+    """Dependency that requires trainer or admin role."""
+    user = get_current_user(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if user.role not in ("trainer", "admin"):
+        raise HTTPException(status_code=403, detail="Trainer access required")
     return user
 
 # -------------------------------------------------------------
@@ -544,3 +553,182 @@ def admin_packages(
         request, "admin/packages.html",
         {"current_user": admin_user, "packages": packages},
     )
+
+
+# -------------------------------------------------------------
+# Calendar
+# -------------------------------------------------------------
+@app.get("/calendar", response_class=HTMLResponse)
+def calendar_page(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    trainers = crud.get_trainers(db, active_only=True)
+    clients = []
+    if user and user.role in ("trainer", "admin"):
+        clients = db.query(models.User).filter(
+            models.User.role == "client",
+            models.User.is_active == True,
+        ).order_by(models.User.full_name).all()
+    return templates.TemplateResponse(request, "calendar.html", {
+        "current_user": user,
+        "trainers": trainers,
+        "clients": clients,
+        "is_trainer": user and user.role in ("trainer", "admin"),
+    })
+
+
+@app.get("/api/calendar/events")
+def calendar_events(
+    request: Request,
+    start: str = Query(...),
+    end: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    user = get_current_user(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    start_dt = datetime.fromisoformat(start.replace("Z", "+00:00")).replace(tzinfo=None)
+    end_dt = datetime.fromisoformat(end.replace("Z", "+00:00")).replace(tzinfo=None)
+    events = calendar_crud.get_calendar_events(
+        db,
+        start=start_dt,
+        end=end_dt,
+        viewer_role=user.role,
+        viewer_user_id=user.id,
+    )
+    return events
+
+
+# -------------------------------------------------------------
+# Session Scheduling (trainer/admin only)
+# -------------------------------------------------------------
+@app.post("/api/sessions/schedule")
+def schedule_session(
+    body: schemas.ScheduleSessionRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_trainer),
+):
+    try:
+        if body.recurring:
+            if not body.frequency:
+                raise HTTPException(status_code=422, detail="frequency required for recurring sessions")
+            session_time = body.session_date.time()
+            sessions, group = calendar_crud.schedule_recurring(
+                db,
+                trainer_id=body.trainer_id,
+                client_user_id=body.client_user_id,
+                start_date=body.session_date.date(),
+                session_time=session_time,
+                duration_minutes=body.duration_minutes,
+                frequency=body.frequency,
+                purchase_id=body.purchase_id,
+                scheduled_by_user_id=current_user.id,
+                notes=body.notes,
+            )
+            return {"created": len(sessions), "recurrence_group_id": group.id}
+        else:
+            sess = calendar_crud.schedule_session(
+                db,
+                trainer_id=body.trainer_id,
+                client_user_id=body.client_user_id,
+                session_date=body.session_date,
+                duration_minutes=body.duration_minutes,
+                purchase_id=body.purchase_id,
+                scheduled_by_user_id=current_user.id,
+                notes=body.notes,
+            )
+            return {"id": sess.id}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.post("/api/sessions/{session_id}/complete")
+def complete_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_trainer),
+):
+    sess = db.get(models.Session, session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        calendar_crud.complete_session(db, sess)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"ok": True}
+
+
+@app.post("/api/sessions/{session_id}/reschedule")
+def reschedule_session(
+    session_id: int,
+    body: schemas.RescheduleRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_trainer),
+):
+    sess = db.get(models.Session, session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    calendar_crud.reschedule_session(db, sess, new_date=body.new_date, scope=body.scope)
+    return {"ok": True}
+
+
+@app.post("/api/sessions/{session_id}/cancel")
+def cancel_session(
+    session_id: int,
+    body: schemas.CancelRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_trainer),
+):
+    sess = db.get(models.Session, session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    cancelled = calendar_crud.cancel_session(db, sess, scope=body.scope)
+    return {"cancelled": len(cancelled)}
+
+
+# -------------------------------------------------------------
+# Invite Management (admin only)
+# -------------------------------------------------------------
+@app.get("/admin/invites", response_class=HTMLResponse)
+def admin_invites_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    invites = invite_crud.list_invites(db)
+    trainers = crud.get_trainers(db, active_only=False)
+    return templates.TemplateResponse(request, "admin/invites.html", {
+        "current_user": current_user,
+        "invites": invites,
+        "trainers": trainers,
+    })
+
+
+@app.post("/api/invites", response_model=schemas.InviteOut)
+def create_invite(
+    body: schemas.InviteCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    try:
+        invite = invite_crud.create_invite(
+            db,
+            email=body.email,
+            role=body.role,
+            invited_by_user_id=current_user.id,
+            trainer_id=body.trainer_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return invite
+
+
+@app.delete("/api/invites/{invite_id}")
+def delete_invite(
+    invite_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    deleted = invite_crud.delete_invite(db, invite_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Invite not found")
+    return {"ok": True}
