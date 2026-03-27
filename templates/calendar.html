@@ -357,10 +357,16 @@
       rescheduleModal.show();
     };
 
+    // Format a JS Date as YYYY-MM-DDTHH:MM in local time (no UTC shift)
+    function toLocalIso(date) {
+      const pad = n => String(n).padStart(2, '0');
+      return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
     async function handleDrop(info) {
       const sessionId = info.event.id;
       const groupId = info.event.extendedProps.recurrence_group_id;
-      const newDate = info.event.start.toISOString();
+      const newDate = toLocalIso(info.event.start);   // local time, no UTC shift
       const newDateLabel = info.event.start.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 
       const performReschedule = async (scope) => {

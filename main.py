@@ -667,7 +667,8 @@ def reschedule_session(
     sess = db.get(models.Session, session_id)
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
-    calendar_crud.reschedule_session(db, sess, new_date=body.new_date, scope=body.scope)
+    new_date = body.new_date.replace(tzinfo=None)  # strip tz; DB stores naive UTC
+    calendar_crud.reschedule_session(db, sess, new_date=new_date, scope=body.scope)
     return {"ok": True}
 
 
