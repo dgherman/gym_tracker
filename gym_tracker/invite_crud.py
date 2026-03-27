@@ -1,12 +1,11 @@
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
 from gym_tracker import models
 
 
-def get_invite_by_email(db: Session, email: str) -> Optional[models.UserInvite]:
+def get_invite_by_email(db: Session, email: str) -> models.UserInvite | None:
     """Look up an invite by email (case-insensitive)."""
     return (
         db.query(models.UserInvite)
@@ -20,8 +19,8 @@ def create_invite(
     *,
     email: str,
     role: str,
-    invited_by_user_id: Optional[int] = None,
-    trainer_id: Optional[int] = None,
+    invited_by_user_id: int | None = None,
+    trainer_id: int | None = None,
 ) -> models.UserInvite:
     """Create a new invite. Raises ValueError if email already invited."""
     email = email.lower().strip()
@@ -33,7 +32,7 @@ def create_invite(
         role=role,
         invited_by_user_id=invited_by_user_id,
         trainer_id=trainer_id,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     db.add(invite)
     db.commit()
@@ -43,7 +42,7 @@ def create_invite(
 
 def accept_invite(db: Session, invite: models.UserInvite) -> None:
     """Mark an invite as accepted (sets accepted_at to now)."""
-    invite.accepted_at = datetime.utcnow()
+    invite.accepted_at = datetime.now(timezone.utc)
     db.commit()
 
 

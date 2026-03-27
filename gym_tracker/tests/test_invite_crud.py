@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -22,8 +22,8 @@ def db():
         email_verified=True,
         role="admin",
         is_active=True,
-        created_at=datetime.utcnow(),
-        last_login_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        last_login_at=datetime.now(timezone.utc),
     )
     session.add(admin)
     session.commit()
@@ -72,5 +72,6 @@ def test_accept_invite(db):
 
 def test_delete_invite(db):
     invite = invite_crud.create_invite(db, email="bob@gym.com", role="client", invited_by_user_id=db._test_admin_id)
-    invite_crud.delete_invite(db, invite.id)
+    result = invite_crud.delete_invite(db, invite.id)
+    assert result is True
     assert invite_crud.get_invite_by_email(db, "bob@gym.com") is None
