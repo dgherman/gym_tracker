@@ -108,6 +108,26 @@
     </div>
   </div>
 
+  <!-- Reschedule modal -->
+  <div class="modal fade" id="rescheduleModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Reschedule Session</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <label class="form-label">New date &amp; time</label>
+          <input type="datetime-local" class="form-control" id="rescheduleDateInput" />
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="rescheduleConfirm">Confirm</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Recurrence scope modal (reschedule / cancel) -->
   <div class="modal fade" id="scopeModal" tabindex="-1">
     <div class="modal-dialog modal-sm">
@@ -215,7 +235,8 @@
       footer.innerHTML = '';
       if (IS_TRAINER && p.status === 'scheduled') {
         footer.innerHTML += `<button class="btn btn-success" onclick="doComplete(${event.id})">Mark Complete</button> `;
-        footer.innerHTML += `<button class="btn btn-warning" onclick="doReschedule(${event.id}, ${JSON.stringify(p.recurrence_group_id)})">Reschedule</button> `;
+        const startIso = event.start.toISOString().substring(0, 16);
+        footer.innerHTML += `<button class="btn btn-warning" onclick="doReschedule(${event.id}, ${JSON.stringify(p.recurrence_group_id)}, '${startIso}')">Reschedule</button> `;
         footer.innerHTML += `<button class="btn btn-danger" onclick="doCancel(${event.id}, ${JSON.stringify(p.recurrence_group_id)})">Cancel</button>`;
       }
       eventModal.show();
@@ -257,23 +278,40 @@
       }
     };
 
-    // ---- Reschedule (drag or button) ----
-    window.doReschedule = function(sessionId, groupId) {
+    // ---- Reschedule (button) ----
+    const rescheduleModal = IS_TRAINER ? new bootstrap.Modal(document.getElementById('rescheduleModal')) : null;
+    let _rescheduleCallback = null;
+
+    if (IS_TRAINER) {
+      document.getElementById('rescheduleConfirm').addEventListener('click', function() {
+        const newDateStr = document.getElementById('rescheduleDateInput').value;
+        if (!newDateStr) return;
+        rescheduleModal.hide();
+        if (_rescheduleCallback) _rescheduleCallback(newDateStr);
+      });
+    }
+
+    window.doReschedule = function(sessionId, groupId, currentDateStr) {
       eventModal.hide();
-      const newDateStr = prompt('New date/time (YYYY-MM-DDTHH:MM):');
-      if (!newDateStr) return;
-      const performReschedule = async (scope) => {
+      document.getElementById('rescheduleDateInput').value = currentDateStr;
+
+      const performReschedule = async (scope, newDateStr) => {
         await fetch(`/api/sessions/${sessionId}/reschedule`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ new_date: newDateStr, scope }),
         });
         calendar.refetchEvents();
       };
+
       if (groupId) {
-        withScope('Reschedule Recurring Session', 'Move just this session, or this and all future sessions?', performReschedule);
+        _rescheduleCallback = (newDateStr) => {
+          withScope('Reschedule Recurring Session', 'Move just this session, or this and all future sessions?',
+            (scope) => performReschedule(scope, newDateStr));
+        };
       } else {
-        performReschedule('this');
+        _rescheduleCallback = (newDateStr) => performReschedule('this', newDateStr);
       }
+      rescheduleModal.show();
     };
 
     async function handleDrop(info) {
