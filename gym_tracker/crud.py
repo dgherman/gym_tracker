@@ -245,6 +245,8 @@ def create_session(
         session_date=datetime.now(timezone.utc),
         created_by_user_id=created_by_user_id,
         partner_user_id=session_partner_id,
+        status="completed",
+        client_user_id=created_by_user_id,
     )
     db.add(db_session)
     db.commit()
@@ -274,8 +276,8 @@ def get_sessions(
         q = q.filter(models.Session.session_date <= end)
     sessions = q.order_by(models.Session.session_date.desc()).all()
     for sess in sessions:
-        purchase = db.get(models.Purchase, sess.purchase_id)
-        sess.purchase_exhausted = (purchase.sessions_remaining == 0)
+        purchase = db.get(models.Purchase, sess.purchase_id) if sess.purchase_id else None
+        sess.purchase_exhausted = (purchase.sessions_remaining == 0) if purchase else False
         if user_id is not None:
             _annotate_session(sess, purchase, user_id)
     return sessions
