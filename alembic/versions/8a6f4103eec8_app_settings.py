@@ -35,11 +35,19 @@ def upgrade() -> None:
         )
         op.create_index("ix_app_settings_id", "app_settings", ["id"])
         op.create_index("ix_app_settings_key", "app_settings", ["key"])
-        # Seed the auto_complete_sessions setting
-        op.execute("INSERT INTO app_settings (`key`, `value`, created_at) VALUES ('auto_complete_sessions', 'false', NOW())")
+
+    # Always ensure seed row exists (idempotent)
+    op.execute(
+        "INSERT INTO app_settings (`key`, `value`, created_at) VALUES ('auto_complete_sessions', 'false', NOW()) "
+        "ON DUPLICATE KEY UPDATE `key` = `key`"
+    )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_app_settings_key", table_name="app_settings")
-    op.drop_index("ix_app_settings_id", table_name="app_settings")
-    op.drop_table("app_settings")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_tables = inspector.get_table_names()
+    if "app_settings" in existing_tables:
+        op.drop_index("ix_app_settings_key", table_name="app_settings")
+        op.drop_index("ix_app_settings_id", table_name="app_settings")
+        op.drop_table("app_settings")
