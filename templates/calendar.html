@@ -9,6 +9,45 @@
   <style>
     #calendar { max-width: 1100px; margin: 0 auto; }
     .fc-event { cursor: pointer; }
+    /* Custom event card layout */
+    .fc-custom-event {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      padding: 2px 4px;
+      height: 100%;
+      position: relative;
+      overflow: hidden;
+    }
+    .fc-client-name {
+      font-weight: 600;
+      font-size: 0.85em;
+      line-height: 1.2;
+      padding-right: 28px; /* room for initials badge */
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .fc-time-slot {
+      font-size: 0.75em;
+      opacity: 0.9;
+      line-height: 1.2;
+    }
+    .fc-trainer-badge {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.6em;
+      font-weight: 700;
+      color: #fff;
+      flex-shrink: 0;
+    }
   </style>
 </head>
 <body class="bg-light">
@@ -201,6 +240,32 @@
   <script>
   const IS_TRAINER = {{ 'true' if is_trainer else 'false' }};
 
+  function getInitials(name) {
+    return name.split(/\s+/).filter(Boolean).map(function(w){ return w[0]; }).join('').substring(0, 2).toUpperCase();
+  }
+
+  // Stable color per trainer name (hash → palette)
+  const TRAINER_COLORS = ['#0d9488','#7c3aed','#dc2626','#d97706','#2563eb','#16a34a','#db2777','#ea580c'];
+  function getTrainerColor(name) {
+    var h = 0;
+    for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    return TRAINER_COLORS[h % TRAINER_COLORS.length];
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function formatTimeRange(start, end) {
+    if (!start) return '';
+    var fmtOpts = { hour: 'numeric', minute: '2-digit', hour12: true };
+    var startRaw = start.toLocaleTimeString([], fmtOpts);
+    var endRaw   = (end || new Date(start.getTime() + 60*60*1000)).toLocaleTimeString([], fmtOpts);
+    // Strip AM/PM from start if same meridiem as end
+    var startClean = startRaw.replace(/\s?[ap]m$/i, '').trim();
+    return startClean + ' - ' + endRaw;
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
     const calEl = document.getElementById('calendar');
     const calendar = new FullCalendar.Calendar(calEl, {
@@ -212,6 +277,27 @@
       },
       editable: IS_TRAINER,
       events: { url: '/api/calendar/events', method: 'GET' },
+      eventContent: function(arg) {
+        const event = arg.event;
+        const p = event.extendedProps;
+        const displayName = IS_TRAINER
+          ? (p.client_name || event.title)
+          : (p.trainer_name || event.title);
+        const timeStr = formatTimeRange(event.start, event.end);
+        let badgeHtml = '';
+        if (IS_TRAINER && p.trainer_name && p.trainer_name !== 'Unknown') {
+          const initials = getInitials(p.trainer_name);
+          const color = getTrainerColor(p.trainer_name);
+          badgeHtml = `<span class="fc-trainer-badge" style="background:${color}">${initials}</span>`;
+        }
+        return {
+          html: `<div class="fc-custom-event">` +
+            `<div class="fc-client-name">${escHtml(displayName)}</div>` +
+            `<div class="fc-time-slot">${timeStr}</div>` +
+            badgeHtml +
+            `</div>`
+        };
+      },
       dateClick: function(info) {
         if (IS_TRAINER) openScheduleModal(info.dateStr);
       },
