@@ -578,6 +578,9 @@ async def update_setting(
     admin_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    VALID_KEYS = {"auto_complete_sessions"}
+    if body.key not in VALID_KEYS:
+        raise HTTPException(status_code=422, detail=f"Unknown setting key: {body.key!r}")
     setting = db.query(models.AppSetting).filter(models.AppSetting.key == body.key).first()
     if setting:
         setting.value = body.value
