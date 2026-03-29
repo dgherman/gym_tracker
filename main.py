@@ -573,7 +573,7 @@ def admin_settings_page(
 
 
 @app.post("/api/admin/settings")
-async def update_setting(
+def update_setting(
     body: schemas.SettingUpdate,
     admin_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
