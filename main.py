@@ -82,6 +82,10 @@ def get_db():
     finally:
         db.close()
 
+def get_setting(db: Session, key: str, default: str = "false") -> str:
+    setting = db.query(models.AppSetting).filter(models.AppSetting.key == key).first()
+    return setting.value if setting else default
+
 def get_current_user(request: Request, db: Session) -> models.User | None:
     user_id = request.session.get("user_id")
     return db.get(models.User, user_id) if user_id else None
@@ -555,6 +559,35 @@ def admin_packages(
     )
 
 
+@app.get("/admin/settings", response_class=HTMLResponse)
+def admin_settings_page(
+    request: Request,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    auto_complete = get_setting(db, "auto_complete_sessions", default="false")
+    return templates.TemplateResponse(
+        request, "admin/settings.html",
+        {"current_user": admin_user, "auto_complete_sessions": auto_complete == "true"},
+    )
+
+
+@app.post("/api/admin/settings")
+async def update_setting(
+    body: schemas.SettingUpdate,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    setting = db.query(models.AppSetting).filter(models.AppSetting.key == body.key).first()
+    if setting:
+        setting.value = body.value
+    else:
+        setting = models.AppSetting(key=body.key, value=body.value, created_at=datetime.utcnow())
+        db.add(setting)
+    db.commit()
+    return {"ok": True, "key": body.key, "value": body.value}
+
+
 # -------------------------------------------------------------
 # Calendar
 # -------------------------------------------------------------
@@ -588,6 +621,8 @@ def calendar_events(
         raise HTTPException(status_code=401, detail="Authentication required")
     start_dt = datetime.fromisoformat(start.replace("Z", "+00:00")).replace(tzinfo=None)
     end_dt = datetime.fromisoformat(end.replace("Z", "+00:00")).replace(tzinfo=None)
+    if get_setting(db, "auto_complete_sessions") == "true":
+        calendar_crud.auto_complete_past_sessions(db)
     events = calendar_crud.get_calendar_events(
         db,
         start=start_dt,
@@ -684,6 +719,22 @@ def cancel_session(
         raise HTTPException(status_code=404, detail="Session not found")
     cancelled = calendar_crud.cancel_session(db, sess, scope=body.scope)
     return {"cancelled": len(cancelled)}
+
+
+@app.post("/api/sessions/{session_id}/reopen")
+def reopen_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_trainer),
+):
+    sess = db.get(models.Session, session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        calendar_crud.reopen_session(db, sess)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"ok": True}
 
 
 # -------------------------------------------------------------
