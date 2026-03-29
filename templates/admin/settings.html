@@ -28,6 +28,40 @@
       </div>
     </div>
 
+    <div class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Gym Hours &amp; Days</h5>
+        <p class="card-text text-muted">Set the calendar display range. Only these hours and days will be shown in the calendar view.</p>
+
+        <div class="row g-3 mb-3">
+          <div class="col-sm-6">
+            <label class="form-label" for="gymOpenTime">Opening time</label>
+            <input type="time" class="form-control" id="gymOpenTime" value="{{ gym_open_time }}">
+          </div>
+          <div class="col-sm-6">
+            <label class="form-label" for="gymCloseTime">Closing time</label>
+            <input type="time" class="form-control" id="gymCloseTime" value="{{ gym_close_time }}">
+          </div>
+        </div>
+
+        <label class="form-label">Open days</label>
+        <div class="d-flex flex-wrap gap-2 mb-3" id="gymDayChecks">
+          {% set closed = gym_closed_days.split(',') if gym_closed_days else [] %}
+          {% for day_num, day_name in [(1,'Mon'),(2,'Tue'),(3,'Wed'),(4,'Thu'),(5,'Fri'),(6,'Sat'),(0,'Sun')] %}
+          <div class="form-check form-check-inline">
+            <input class="form-check-input gym-day-check" type="checkbox"
+                   id="gymDay{{ day_num }}" value="{{ day_num }}"
+                   {% if day_num|string not in closed %}checked{% endif %}>
+            <label class="form-check-label" for="gymDay{{ day_num }}">{{ day_name }}</label>
+          </div>
+          {% endfor %}
+        </div>
+
+        <button type="button" class="btn btn-primary btn-sm" id="gymHoursSave">Save hours &amp; days</button>
+        <span id="gymHoursStatus" class="ms-2 text-muted small"></span>
+      </div>
+    </div>
+
     <a href="/admin" class="btn btn-outline-secondary">← Back to Admin Console</a>
   </div>
 
@@ -53,6 +87,40 @@
       } catch (e) {
         statusEl.textContent = 'Network error.';
         this.checked = !this.checked;
+      }
+    });
+
+    async function saveSetting(key, value) {
+      const res = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, value }),
+      });
+      return res.ok;
+    }
+
+    document.getElementById('gymHoursSave').addEventListener('click', async function () {
+      const statusEl = document.getElementById('gymHoursStatus');
+      const openTime  = document.getElementById('gymOpenTime').value;
+      const closeTime = document.getElementById('gymCloseTime').value;
+      const closedDays = Array.from(document.querySelectorAll('.gym-day-check:not(:checked)'))
+        .map(cb => cb.value).join(',');
+
+      statusEl.textContent = 'Saving…';
+      try {
+        const results = await Promise.all([
+          saveSetting('gym_open_time',   openTime),
+          saveSetting('gym_close_time',  closeTime),
+          saveSetting('gym_closed_days', closedDays),
+        ]);
+        if (results.every(Boolean)) {
+          statusEl.textContent = 'Saved. Reload the calendar to apply.';
+          setTimeout(() => { statusEl.textContent = ''; }, 4000);
+        } else {
+          statusEl.textContent = 'Error saving. Please try again.';
+        }
+      } catch (e) {
+        statusEl.textContent = 'Network error.';
       }
     });
   </script>

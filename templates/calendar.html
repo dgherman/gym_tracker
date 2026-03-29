@@ -239,6 +239,9 @@
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
   <script>
   const IS_TRAINER = {{ 'true' if is_trainer else 'false' }};
+  const GYM_OPEN  = '{{ gym_open_time }}';   // "HH:MM" or ""
+  const GYM_CLOSE = '{{ gym_close_time }}';  // "HH:MM" or ""
+  const GYM_CLOSED_DAYS = '{{ gym_closed_days }}'; // comma-separated day nums (0=Sun..6=Sat)
 
   function getInitials(name) {
     return name.split(/\s+/).filter(Boolean).map(function(w){ return w[0]; }).join('').substring(0, 2).toUpperCase();
@@ -276,6 +279,10 @@
         right: 'dayGridMonth,timeGridWeek,timeGridDay,listWeek'
       },
       editable: IS_TRAINER,
+      displayEventTime: false,
+      slotMinTime: GYM_OPEN  ? GYM_OPEN  + ':00' : '00:00:00',
+      slotMaxTime: GYM_CLOSE ? GYM_CLOSE + ':00' : '24:00:00',
+      hiddenDays: GYM_CLOSED_DAYS.split(',').filter(Boolean).map(Number),
       events: { url: '/api/calendar/events', method: 'GET' },
       eventContent: function(arg) {
         const event = arg.event;
@@ -283,6 +290,8 @@
         const displayName = IS_TRAINER
           ? (p.client_name || event.title)
           : (p.trainer_name || event.title);
+        const durationMs = event.end ? (event.end - event.start) : 3600000;
+        const isShort = durationMs <= 30 * 60 * 1000;
         const timeStr = formatTimeRange(event.start, event.end);
         let badgeHtml = '';
         if (IS_TRAINER && p.trainer_name && p.trainer_name !== 'Unknown') {
@@ -291,9 +300,9 @@
           badgeHtml = `<span class="fc-trainer-badge" style="background:${color}">${initials}</span>`;
         }
         return {
-          html: `<div class="fc-custom-event">` +
+          html: `<div class="fc-custom-event${isShort ? ' fc-custom-event--short' : ''}">` +
             `<div class="fc-client-name">${escHtml(displayName)}</div>` +
-            `<div class="fc-time-slot">${timeStr}</div>` +
+            (isShort ? '' : `<div class="fc-time-slot">${timeStr}</div>`) +
             badgeHtml +
             `</div>`
         };

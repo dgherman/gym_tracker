@@ -568,7 +568,13 @@ def admin_settings_page(
     auto_complete = get_setting(db, "auto_complete_sessions", default="false")
     return templates.TemplateResponse(
         request, "admin/settings.html",
-        {"current_user": admin_user, "auto_complete_sessions": auto_complete == "true"},
+        {
+            "current_user": admin_user,
+            "auto_complete_sessions": auto_complete == "true",
+            "gym_open_time": get_setting(db, "gym_open_time", default="06:00"),
+            "gym_close_time": get_setting(db, "gym_close_time", default="22:00"),
+            "gym_closed_days": get_setting(db, "gym_closed_days", default=""),
+        },
     )
 
 
@@ -578,7 +584,7 @@ def update_setting(
     admin_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    VALID_KEYS = {"auto_complete_sessions"}
+    VALID_KEYS = {"auto_complete_sessions", "gym_open_time", "gym_close_time", "gym_closed_days"}
     if body.key not in VALID_KEYS:
         raise HTTPException(status_code=422, detail=f"Unknown setting key: {body.key!r}")
     setting = db.query(models.AppSetting).filter(models.AppSetting.key == body.key).first()
@@ -609,6 +615,9 @@ def calendar_page(request: Request, db: Session = Depends(get_db)):
         "trainers": trainers,
         "clients": clients,
         "is_trainer": user and user.role in ("trainer", "admin"),
+        "gym_open_time": get_setting(db, "gym_open_time", default="06:00"),
+        "gym_close_time": get_setting(db, "gym_close_time", default="22:00"),
+        "gym_closed_days": get_setting(db, "gym_closed_days", default=""),
     })
 
 
