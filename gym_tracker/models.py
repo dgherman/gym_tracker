@@ -150,3 +150,11 @@ class UserInvite(Base):
 
     trainer = relationship("Trainer")
     invited_by = relationship("User", foreign_keys=[invited_by_user_id])
+
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(100), unique=True, nullable=False, index=True)
+    value = Column(String(255), nullable=False)
