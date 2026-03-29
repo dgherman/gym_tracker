@@ -359,6 +359,7 @@
     let _completedDateStr = null;
 
     window.openCompletedActions = function(sessionId, groupId, currentDateStr) {
+      if (!completedActionsModal) return;  // non-trainer guard
       _completedSessionId = sessionId;
       _completedGroupId = groupId;
       _completedDateStr = currentDateStr;
@@ -371,6 +372,7 @@
     if (IS_TRAINER) {
       document.getElementById('completedModifyDate').addEventListener('click', function () {
         completedActionsModal.hide();
+        // doReschedule also calls eventModal.hide() — already hidden, harmless no-op in Bootstrap 5
         doReschedule(_completedSessionId, _completedGroupId, _completedDateStr);
       });
 
