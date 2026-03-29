@@ -158,3 +158,7 @@ class AppSetting(Base):
     id = Column(Integer, primary_key=True, index=True)
     key = Column(String(100), unique=True, nullable=False, index=True)
     value = Column(String(255), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    def __repr__(self) -> str:
+        return f"<AppSetting key={self.key!r} value={self.value!r}>"
