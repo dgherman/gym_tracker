@@ -224,3 +224,80 @@ def test_get_calendar_events_client_sees_own_only(db):
     )
     for e in events:
         assert e["extendedProps"]["client_user_id"] == db._client_user_id
+
+
+def test_cancel_completed_session_refunds_credit(db):
+    """A completed session can be cancelled retroactively and its credit is refunded."""
+    future = datetime.utcnow() + timedelta(days=20)
+    sess = calendar_crud.schedule_session(
+        db, trainer_id=db._trainer_id, client_user_id=db._client_user_id,
+        session_date=future, duration_minutes=60,
+        purchase_id=db._purchase_id, scheduled_by_user_id=db._trainer_user_id,
+    )
+    # Force status to completed directly (simulating auto-complete or manual complete)
+    sess.status = "completed"
+    db.commit()
+
+    before = db.get(models.Purchase, db._purchase_id).sessions_remaining
+    calendar_crud.cancel_session(db, sess, scope="this")
+    after = db.get(models.Purchase, db._purchase_id).sessions_remaining
+
+    assert sess.status == "cancelled"
+    assert after == before + 1
+
+
+def test_reopen_session_reverts_to_scheduled(db):
+    """reopen_session changes status from completed back to scheduled."""
+    future = datetime.utcnow() + timedelta(days=21)
+    sess = calendar_crud.schedule_session(
+        db, trainer_id=db._trainer_id, client_user_id=db._client_user_id,
+        session_date=future, duration_minutes=60,
+        purchase_id=None, scheduled_by_user_id=db._trainer_user_id,
+    )
+    sess.status = "completed"
+    db.commit()
+
+    calendar_crud.reopen_session(db, sess)
+    assert sess.status == "scheduled"
+
+
+def test_reopen_session_raises_if_not_completed(db):
+    """reopen_session raises ValueError if session is not completed."""
+    future = datetime.utcnow() + timedelta(days=22)
+    sess = calendar_crud.schedule_session(
+        db, trainer_id=db._trainer_id, client_user_id=db._client_user_id,
+        session_date=future, duration_minutes=60,
+        purchase_id=None, scheduled_by_user_id=db._trainer_user_id,
+    )
+    with pytest.raises(ValueError, match="not completed"):
+        calendar_crud.reopen_session(db, sess)
+
+
+def test_auto_complete_past_sessions(db):
+    """auto_complete_past_sessions marks past scheduled sessions as completed."""
+    past = datetime.utcnow() - timedelta(days=2)
+    sess = calendar_crud.schedule_session(
+        db, trainer_id=db._trainer_id, client_user_id=db._client_user_id,
+        session_date=past, duration_minutes=60,
+        purchase_id=None, scheduled_by_user_id=db._trainer_user_id,
+    )
+    assert sess.status == "scheduled"
+
+    completed = calendar_crud.auto_complete_past_sessions(db)
+    db.refresh(sess)
+
+    assert sess.id in [s.id for s in completed]
+    assert sess.status == "completed"
+
+
+def test_auto_complete_does_not_touch_future_sessions(db):
+    """auto_complete_past_sessions leaves future sessions untouched."""
+    future = datetime.utcnow() + timedelta(days=5)
+    sess = calendar_crud.schedule_session(
+        db, trainer_id=db._trainer_id, client_user_id=db._client_user_id,
+        session_date=future, duration_minutes=60,
+        purchase_id=None, scheduled_by_user_id=db._trainer_user_id,
+    )
+    calendar_crud.auto_complete_past_sessions(db)
+    db.refresh(sess)
+    assert sess.status == "scheduled"

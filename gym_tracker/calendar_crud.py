@@ -191,6 +191,37 @@ def complete_session(db: Session, sess: models.Session) -> models.Session:
     return sess
 
 
+def reopen_session(db: Session, sess: models.Session) -> models.Session:
+    """Revert a completed session back to scheduled. No credit change."""
+    if sess.status != "completed":
+        raise ValueError(f"Session is not completed (status='{sess.status}')")
+    sess.status = "scheduled"
+    db.commit()
+    return sess
+
+
+def auto_complete_past_sessions(db: Session) -> list[models.Session]:
+    """
+    Mark all past scheduled sessions as completed.
+    Called lazily when the auto_complete_sessions setting is enabled.
+    No credit change — credits are reserved at scheduling time.
+    """
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    past_scheduled = (
+        db.query(models.Session)
+        .filter(
+            models.Session.status == "scheduled",
+            models.Session.session_date < now,
+        )
+        .all()
+    )
+    for s in past_scheduled:
+        s.status = "completed"
+    if past_scheduled:
+        db.commit()
+    return past_scheduled
+
+
 def cancel_session(
     db: Session,
     sess: models.Session,
@@ -229,7 +260,7 @@ def cancel_session(
 
     cancelled = []
     for s in to_cancel:
-        if s.status == "scheduled":
+        if s.status in ("scheduled", "completed"):
             s.status = "cancelled"
             if s.purchase_id:
                 purchase = db.get(models.Purchase, s.purchase_id)
