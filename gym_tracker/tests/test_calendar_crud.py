@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, timezone
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -228,7 +228,7 @@ def test_get_calendar_events_client_sees_own_only(db):
 
 def test_cancel_completed_session_refunds_credit(db):
     """A completed session can be cancelled retroactively and its credit is refunded."""
-    future = datetime.utcnow() + timedelta(days=20)
+    future = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=20)
     sess = calendar_crud.schedule_session(
         db, trainer_id=db._trainer_id, client_user_id=db._client_user_id,
         session_date=future, duration_minutes=60,
@@ -248,7 +248,7 @@ def test_cancel_completed_session_refunds_credit(db):
 
 def test_reopen_session_reverts_to_scheduled(db):
     """reopen_session changes status from completed back to scheduled."""
-    future = datetime.utcnow() + timedelta(days=21)
+    future = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=21)
     sess = calendar_crud.schedule_session(
         db, trainer_id=db._trainer_id, client_user_id=db._client_user_id,
         session_date=future, duration_minutes=60,
@@ -263,7 +263,7 @@ def test_reopen_session_reverts_to_scheduled(db):
 
 def test_reopen_session_raises_if_not_completed(db):
     """reopen_session raises ValueError if session is not completed."""
-    future = datetime.utcnow() + timedelta(days=22)
+    future = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=22)
     sess = calendar_crud.schedule_session(
         db, trainer_id=db._trainer_id, client_user_id=db._client_user_id,
         session_date=future, duration_minutes=60,
@@ -273,9 +273,23 @@ def test_reopen_session_raises_if_not_completed(db):
         calendar_crud.reopen_session(db, sess)
 
 
+def test_reopen_session_raises_if_cancelled(db):
+    """reopen_session raises ValueError if session is cancelled."""
+    future = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=23)
+    sess = calendar_crud.schedule_session(
+        db, trainer_id=db._trainer_id, client_user_id=db._client_user_id,
+        session_date=future, duration_minutes=60,
+        purchase_id=None, scheduled_by_user_id=db._trainer_user_id,
+    )
+    sess.status = "cancelled"
+    db.commit()
+    with pytest.raises(ValueError, match="not completed"):
+        calendar_crud.reopen_session(db, sess)
+
+
 def test_auto_complete_past_sessions(db):
     """auto_complete_past_sessions marks past scheduled sessions as completed."""
-    past = datetime.utcnow() - timedelta(days=2)
+    past = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=2)
     sess = calendar_crud.schedule_session(
         db, trainer_id=db._trainer_id, client_user_id=db._client_user_id,
         session_date=past, duration_minutes=60,
@@ -292,7 +306,7 @@ def test_auto_complete_past_sessions(db):
 
 def test_auto_complete_does_not_touch_future_sessions(db):
     """auto_complete_past_sessions leaves future sessions untouched."""
-    future = datetime.utcnow() + timedelta(days=5)
+    future = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=5)
     sess = calendar_crud.schedule_session(
         db, trainer_id=db._trainer_id, client_user_id=db._client_user_id,
         session_date=future, duration_minutes=60,

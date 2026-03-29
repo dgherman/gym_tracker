@@ -246,7 +246,7 @@ def cancel_session(
             .filter(
                 models.Session.recurrence_group_id == group_id,
                 models.Session.session_date >= pivot_date,
-                models.Session.status == "scheduled",
+                models.Session.status.in_(("scheduled", "completed")),
                 models.Session.id != sess.id,
             )
             .all()
