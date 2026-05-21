@@ -1,6 +1,8 @@
 # Web framework
-fastapi>=0.95.0
-jinja2
+# Pinned: FastAPI 0.115.x bundles Starlette 0.40+, which uses the
+# TemplateResponse(request, name, context) signature this code relies on.
+fastapi>=0.115,<0.116
+jinja2>=3.1,<4
 
 # ASGI server
 uvicorn[standard]>=0.22.0
