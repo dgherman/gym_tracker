@@ -54,6 +54,7 @@
                 <!-- Options will be populated dynamically -->
               </select>
             </div>
+            {% include "_activity_section.html" %}
           </div>
           <div class="modal-footer">
             <button type="submit" class="btn btn-primary">Save</button>
@@ -68,6 +69,7 @@
   <script>
     // Helpers
     function pad(n) { return n.toString().padStart(2,'0'); }
+    let sessionsById = {};
 
     // Load trainers from API
     async function loadTrainers() {
@@ -109,6 +111,7 @@
     window.addEventListener('DOMContentLoaded', () => {
       buttons[0].classList.add('active');
       loadTrainers();
+      ActivitySection.load().then(() => ActivitySection.init());
       loadHistory(currentRange);
     });
 
@@ -141,6 +144,8 @@
         fetch(`/history/purchases/?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`)
       ]);
       const sessions  = await sRes.json();
+      sessionsById = {};
+      sessions.forEach(s => { sessionsById[s.id] = s; });
       const purchases = await pRes.json();
 
       // Sessions
@@ -167,25 +172,42 @@
 
           const canEdit = s.is_owner !== false;
 
+          let actHtml = '';
+          if (s.activities && s.activities.length) {
+            const byCat = {};
+            s.activities.forEach(a => { (byCat[a.category_name] = byCat[a.category_name] || []).push(a); });
+            actHtml = '<div class="ms-3 mt-1 w-100">' + Object.entries(byCat).map(([cat, items]) => {
+              const lines = items.map(a => {
+                const parts = Object.entries(a.values || {}).map(([k, v]) => `${k}: ${v}`).join(' · ');
+                const note = a.notes ? ` <span class="text-muted">· ${a.notes}</span>` : '';
+                return `<div class="small">• ${a.activity_name} <span class="text-muted">${parts}</span>${note}</div>`;
+              }).join('');
+              return `<div class="small text-uppercase text-muted">${cat}</div>${lines}`;
+            }).join('') + '</div>';
+          }
+
           html += `
-            <li class="list-group-item d-flex justify-content-between align-items-center small" id="session-card-${s.id}">
-              <span class="flex-grow-1 text-wrap">
-                ${label} — ${s.duration_minutes} min with ${s.trainer}${partnerBadge}
-              </span>
-              <span class="d-flex gap-1">
-                ${canEdit ? `
-                <button class="btn btn-sm btn-outline-primary action-btn py-0 px-2"
-                        data-bs-toggle="modal" data-bs-target="#editSessionModal"
-                        data-id="${s.id}"
-                        data-date="${dtLocal}"
-                        data-duration="${s.duration_minutes}"
-                        data-trainer="${s.trainer}">
-                  Edit
-                </button>
-                <button class="btn btn-sm btn-outline-danger action-btn py-0 px-2"
-                        onclick="confirmDelete('session', ${s.id})">Delete</button>
-                ` : ''}
-              </span>
+            <li class="list-group-item small" id="session-card-${s.id}">
+              <div class="d-flex justify-content-between align-items-center">
+                <span class="flex-grow-1 text-wrap">
+                  ${label} — ${s.duration_minutes} min with ${s.trainer}${partnerBadge}
+                </span>
+                <span class="d-flex gap-1">
+                  ${canEdit ? `
+                  <button class="btn btn-sm btn-outline-primary action-btn py-0 px-2"
+                          data-bs-toggle="modal" data-bs-target="#editSessionModal"
+                          data-id="${s.id}"
+                          data-date="${dtLocal}"
+                          data-duration="${s.duration_minutes}"
+                          data-trainer="${s.trainer}">
+                    Edit
+                  </button>
+                  <button class="btn btn-sm btn-outline-danger action-btn py-0 px-2"
+                          onclick="confirmDelete('session', ${s.id})">Delete</button>
+                  ` : ''}
+                </span>
+              </div>
+              ${actHtml}
             </li>`;
         });
       } else {
@@ -265,6 +287,9 @@
         // Ensure trainers are loaded before setting the value
         await loadTrainers();
         document.getElementById('sessionTrainer').value  = btn.dataset.trainer;
+
+        const sess = sessionsById[btn.dataset.id];
+        ActivitySection.prefill(sess ? sess.activities : []);
       });
 
     function submitSessionEdit(evt) {
@@ -273,7 +298,8 @@
       const payload = {
         session_date:     document.getElementById('sessionDate').value,
         duration_minutes: +document.getElementById('sessionDuration').value,
-        trainer:          document.getElementById('sessionTrainer').value
+        trainer:          document.getElementById('sessionTrainer').value,
+        activities:       ActivitySection.collect()
       };
       fetch(`/history/api/edit/session/${id}`, {
         method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
