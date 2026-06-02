@@ -48,3 +48,6 @@ bin/
 
 # Ignore egg-info generated directories
 gym_tracker.egg-info/
+
+# brainstorming companion artifacts
+.superpowers/
