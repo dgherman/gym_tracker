@@ -159,6 +159,7 @@
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     // ---- helpers --------------------------------------------------------
+    function escapeHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
     async function postJSON(url, body, method = 'POST') {
       const r = await fetch(url, {
@@ -193,7 +194,7 @@
       if (!wrap) return;
       wrap.innerHTML = acts.length
         ? acts.map(a => `<div class="d-flex justify-content-between align-items-center small border-bottom py-1">
-            <span>${a.name}</span>
+            <span>${escapeHtml(a.name)}</span>
             <span>
               <button class="btn btn-sm btn-link p-0 me-2" onclick="renameActivity(${a.id})">Rename</button>
               <button class="btn btn-sm btn-link text-danger p-0" onclick="deactivateActivity(${a.id})">Deactivate</button>

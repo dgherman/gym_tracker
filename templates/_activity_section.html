@@ -34,6 +34,7 @@
 </div>
 
 <script>
+function escapeHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 const ActivitySection = (function () {
   let categories = [];          // [{id,name,fields:[{key,label,field_type,unit,is_required}]}]
   let activitiesByCat = {};     // catId -> [{id,name}]
@@ -70,7 +71,7 @@ const ActivitySection = (function () {
       activitiesByCat[catId] = await res.json();
     }
     const dl = document.getElementById('actActivityList');
-    dl.innerHTML = activitiesByCat[catId].map(a => `<option value="${a.name}">`).join('');
+    dl.innerHTML = activitiesByCat[catId].map(a => `<option value="${escapeHtml(a.name)}">`).join('');
   }
 
   function renderFields(catId) {
@@ -89,10 +90,10 @@ const ActivitySection = (function () {
     const ul = document.getElementById('actList');
     if (!rows.length) { ul.innerHTML = ''; return; }
     ul.innerHTML = rows.map((r, i) => {
-      const parts = Object.entries(r.values).map(([k, v]) => `${k}: ${v}`).join(' · ');
-      const note = r.notes ? ` <span class="text-muted">· ${r.notes}</span>` : '';
+      const parts = Object.entries(r.values).map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(v)}`).join(' · ');
+      const note = r.notes ? ` <span class="text-muted">· ${escapeHtml(r.notes)}</span>` : '';
       return `<li class="list-group-item d-flex justify-content-between align-items-center py-1 small">
-        <span><strong>${r.activity_name}</strong> <span class="text-muted">· ${r.category_name}</span> ${parts}${note}</span>
+        <span><strong>${escapeHtml(r.activity_name)}</strong> <span class="text-muted">· ${escapeHtml(r.category_name)}</span> ${parts}${note}</span>
         <button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="ActivitySection.remove(${i})">✕</button>
       </li>`;
     }).join('');
