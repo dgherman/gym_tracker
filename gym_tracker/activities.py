@@ -24,31 +24,33 @@ def _coerce(field_type: str, label: str, raw):
 
 
 def validate_activity_values(db: Session, activity: models.Activity, values: dict) -> dict:
-    """Validate a values dict against the activity's category active fields.
-    Returns a cleaned dict (only present, coerced values). Raises ValueError."""
+    """Validate a values dict against the activity's category fields.
+    Active fields drive required-field checks; values for soft-deleted
+    (inactive) fields are still accepted and preserved so historical logs
+    remain editable. Unknown keys (no matching field at all) are rejected.
+    Returns a cleaned dict of present, coerced values. Raises ValueError."""
     values = values or {}
-    fields = (
+    all_fields = (
         db.query(models.CategoryField)
-        .filter(
-            models.CategoryField.category_id == activity.category_id,
-            models.CategoryField.is_active == True,  # noqa: E712
-        )
+        .filter(models.CategoryField.category_id == activity.category_id)
         .all()
     )
-    by_key = {f.key: f for f in fields}
+    field_by_key = {f.key: f for f in all_fields}
 
     for k in values:
-        if k not in by_key:
+        if k not in field_by_key:
             raise ValueError(f"Unknown field '{k}' for this activity")
 
     cleaned = {}
-    for f in fields:
-        raw = values.get(f.key)
+    for k, raw in values.items():
         if raw is None or (isinstance(raw, str) and raw.strip() == ""):
-            if f.is_required:
-                raise ValueError(f"Field '{f.label}' is required")
             continue
-        cleaned[f.key] = _coerce(f.field_type, f.label, raw)
+        f = field_by_key[k]
+        cleaned[k] = _coerce(f.field_type, f.label, raw)
+
+    for f in all_fields:
+        if f.is_active and f.is_required and f.key not in cleaned:
+            raise ValueError(f"Field '{f.label}' is required")
     return cleaned
 
 

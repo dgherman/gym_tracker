@@ -191,3 +191,35 @@ def test_get_sessions_annotates_activities(db):
     sessions = crud.get_sessions(db_)
     target = [s for s in sessions if s.activities]
     assert target and target[0].activities[0].activity_name == "Bench Press"
+
+
+def test_soft_deleted_field_value_still_validates(db):
+    """Soft-deleting a field must NOT break re-validation/editing of a session
+    whose stored values used that field (spec: old logs stay editable)."""
+    db_, act = db
+    # Soft-delete the optional 'weight' field
+    weight = (
+        db_.query(models.CategoryField)
+        .filter_by(category_id=act.category_id, key="weight")
+        .first()
+    )
+    weight.is_active = False
+    db_.commit()
+    # A payload still containing 'weight' must be accepted and preserved
+    cleaned = activities.validate_activity_values(db_, act, {"reps": "8", "weight": "60"})
+    assert cleaned == {"reps": 8, "weight": 60.0}
+
+
+def test_delete_session_cascades_activities(db):
+    """Deleting a session via the ORM removes its session_activities rows."""
+    db_, act = db
+    sess = _make_session(db_)
+    activities.reconcile_session_activities(
+        db_, sess, [schemas.SessionActivityInput(activity_id=act.id, values={"reps": "8"})]
+    )
+    db_.commit()
+    db_.refresh(sess)
+    sa_id = sess.activities[0].id
+    db_.delete(sess)
+    db_.commit()
+    assert db_.get(models.SessionActivity, sa_id) is None
