@@ -149,3 +149,45 @@ def test_reconcile_inactive_activity_rejected(db):
         activities.reconcile_session_activities(
             db_, sess, [schemas.SessionActivityInput(activity_id=act.id, values={"reps": "8"})]
         )
+
+
+from gym_tracker import crud
+
+
+def test_create_session_with_activities(db):
+    db_, act = db
+    # need a purchase to consume
+    pur = models.Purchase(duration_minutes=45, total_sessions=10, sessions_remaining=10)
+    db_.add(pur); db_.commit()
+
+    items = [schemas.SessionActivityInput(activity_id=act.id, values={"reps": "8", "weight": "70"})]
+    sess = crud.create_session(db_, 45, "Rachel", activities=items)
+    assert len(sess.activities) == 1
+    assert sess.activities[0].activity_name == "Bench Press"
+    assert sess.activities[0].category_name == "Strength"
+
+
+def test_create_session_bad_activity_rolls_back(db):
+    db_, act = db
+    pur = models.Purchase(duration_minutes=45, total_sessions=10, sessions_remaining=10)
+    db_.add(pur); db_.commit()
+    remaining_before = pur.sessions_remaining
+    with pytest.raises(ValueError):
+        crud.create_session(
+            db_, 45, "Rachel",
+            activities=[schemas.SessionActivityInput(activity_id=act.id, values={"reps": "oops"})],
+        )
+    db_.rollback()
+    db_.refresh(pur)
+    assert pur.sessions_remaining == remaining_before  # not consumed
+
+
+def test_get_sessions_annotates_activities(db):
+    db_, act = db
+    pur = models.Purchase(duration_minutes=45, total_sessions=10, sessions_remaining=10)
+    db_.add(pur); db_.commit()
+    crud.create_session(db_, 45, "Rachel",
+                        activities=[schemas.SessionActivityInput(activity_id=act.id, values={"reps": "8"})])
+    sessions = crud.get_sessions(db_)
+    target = [s for s in sessions if s.activities]
+    assert target and target[0].activities[0].activity_name == "Bench Press"
