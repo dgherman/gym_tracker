@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -34,6 +35,7 @@ PUBLIC_PATHS = {
     "/me",  # keep public if you use it for debugging
     "/privacy",
     "/terms",
+    "/dev/login",  # dev-only login bypass (gated by DEV_LOGIN env var; see route)
 }
 
 class LoginRequiredMiddleware(BaseHTTPMiddleware):
@@ -134,6 +136,32 @@ class ReportsData(BaseModel):
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
+
+# -------------------------------------------------------------
+# Dev-only login bypass — DISABLED unless DEV_LOGIN env var is truthy.
+# Lets you click through the UI locally without Google OAuth.
+# Upserts a dev admin user and sets the session. NEVER enable in prod.
+# -------------------------------------------------------------
+@app.get("/dev/login")
+def dev_login(request: Request, db: Session = Depends(get_db)):
+    if os.getenv("DEV_LOGIN", "").lower() not in ("1", "true", "yes"):
+        raise HTTPException(status_code=404, detail="Not found")
+    email = os.getenv("DEV_LOGIN_EMAIL", "dev@example.com")
+    user = db.query(models.User).filter(models.User.email == email).first()
+    if not user:
+        user = models.User(
+            google_sub=f"dev-{email}",
+            email=email,
+            email_verified=True,
+            full_name="Dev User",
+            role="admin",
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    request.session["user_id"] = user.id
+    return RedirectResponse("/")
 
 # -------------------------------------------------------------
 # Root landing page (renders templates/index.html)
