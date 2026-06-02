@@ -113,8 +113,8 @@ def upgrade() -> None:
         sa.column("created_at", sa.DateTime),
     )
     op.bulk_insert(fields, [
-        {"category_id": 1, "key": "reps", "label": "Reps", "field_type": "integer", "unit": None, "is_required": True, "is_active": True, "sort_order": 1, "created_at": now},
-        {"category_id": 1, "key": "weight", "label": "Weight", "field_type": "decimal", "unit": "kg", "is_required": False, "is_active": True, "sort_order": 2, "created_at": now},
+        {"category_id": 1, "key": "reps", "label": "Reps", "field_type": "integer", "unit": None, "is_required": False, "is_active": True, "sort_order": 1, "created_at": now},
+        {"category_id": 1, "key": "weight", "label": "Weight", "field_type": "decimal", "unit": "lbs", "is_required": False, "is_active": True, "sort_order": 2, "created_at": now},
         {"category_id": 2, "key": "distance", "label": "Distance", "field_type": "decimal", "unit": "km", "is_required": False, "is_active": True, "sort_order": 1, "created_at": now},
         {"category_id": 2, "key": "duration", "label": "Duration", "field_type": "duration", "unit": None, "is_required": False, "is_active": True, "sort_order": 2, "created_at": now},
         {"category_id": 2, "key": "pace", "label": "Pace", "field_type": "text", "unit": None, "is_required": False, "is_active": True, "sort_order": 3, "created_at": now},

@@ -63,7 +63,7 @@ Admin-defined metric schema for a category.
 `duration` stored as integer seconds; rendered as `mm:ss`.
 
 Seed fields:
-- Strength → `reps` (integer, required), `weight` (decimal, unit kg)
+- Strength → `reps` (integer), `weight` (decimal, unit lbs)
 - Cardio → `distance` (decimal, unit km), `duration` (duration), `pace` (text)
 - Mobility → `duration` (duration)
 - Other → (no fields; free-form via note)

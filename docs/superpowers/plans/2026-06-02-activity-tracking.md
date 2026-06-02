@@ -289,8 +289,8 @@ def upgrade() -> None:
         sa.column("created_at", sa.DateTime),
     )
     op.bulk_insert(fields, [
-        {"category_id": 1, "key": "reps", "label": "Reps", "field_type": "integer", "unit": None, "is_required": True, "is_active": True, "sort_order": 1, "created_at": now},
-        {"category_id": 1, "key": "weight", "label": "Weight", "field_type": "decimal", "unit": "kg", "is_required": False, "is_active": True, "sort_order": 2, "created_at": now},
+        {"category_id": 1, "key": "reps", "label": "Reps", "field_type": "integer", "unit": None, "is_required": False, "is_active": True, "sort_order": 1, "created_at": now},
+        {"category_id": 1, "key": "weight", "label": "Weight", "field_type": "decimal", "unit": "lbs", "is_required": False, "is_active": True, "sort_order": 2, "created_at": now},
         {"category_id": 2, "key": "distance", "label": "Distance", "field_type": "decimal", "unit": "km", "is_required": False, "is_active": True, "sort_order": 1, "created_at": now},
         {"category_id": 2, "key": "duration", "label": "Duration", "field_type": "duration", "unit": None, "is_required": False, "is_active": True, "sort_order": 2, "created_at": now},
         {"category_id": 2, "key": "pace", "label": "Pace", "field_type": "text", "unit": None, "is_required": False, "is_active": True, "sort_order": 3, "created_at": now},
@@ -567,7 +567,7 @@ def db():
         models.CategoryField(category_id=cat.id, key="reps", label="Reps",
                              field_type="integer", is_required=True, sort_order=1),
         models.CategoryField(category_id=cat.id, key="weight", label="Weight",
-                             field_type="decimal", unit="kg", is_required=False, sort_order=2),
+                             field_type="decimal", unit="lbs", is_required=False, sort_order=2),
     ])
     act = models.Activity(category_id=cat.id, name="Bench Press")
     db.add(act)
@@ -2025,7 +2025,7 @@ uvicorn main:app --reload
 ```
 
 Verify (as a logged-in user; if OAuth is not configured locally, set a session/user per the repo's dev login, or temporarily seed a user and session):
-1. Log Session modal shows collapsed "Log activities (optional)"; expand → pick Strength → fields `Reps *`, `Weight (kg)` render; type "Bench Press" → add a row → log session.
+1. Log Session modal shows collapsed "Log activities (optional)"; expand → pick Strength → fields `Reps`, `Weight (lbs)` render; type "Bench Press" → add a row → log session.
 2. History page shows the session with "STRENGTH • Bench Press reps: 8 …" beneath it.
 3. Edit the session → activity rows are prefilled; add a Cardio activity, edit reps on the existing row, remove one → Save → reload shows the reconciled set.
 4. Delete the session → its activities disappear (no orphan error).
