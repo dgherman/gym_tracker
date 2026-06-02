@@ -61,6 +61,7 @@
             <input type="email" id="sessionPartnerEmail" class="form-control" placeholder="partner@example.com">
             <div class="form-text">Optional. If left empty, the partner from the purchased package will be used.</div>
           </div>
+          {% include "_activity_section.html" %}
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -283,6 +284,7 @@
       if (partnerEmail) {
         payload.partner_email = partnerEmail;
       }
+      payload.activities = ActivitySection.collect();
 
       const res = await fetch('/sessions/', {
         method: 'POST',
@@ -296,6 +298,7 @@
         notif.innerHTML = `<div class="alert alert-success">
           Logged ${s.duration_minutes}-min session with ${s.trainer}.${s.purchase_exhausted ? ' Purchase exhausted!' : ''}
         </div>`;
+        ActivitySection.reset();
       } else {
         const e = await res.json();
         notif.innerHTML = `<div class="alert alert-warning">${e.detail}</div>`;
@@ -357,6 +360,8 @@
       await loadPackages();
       await loadTrainers();
       await refreshSummary();
+      await ActivitySection.load();
+      ActivitySection.init();
     });
   </script>
 </body>

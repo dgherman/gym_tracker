@@ -15,6 +15,7 @@ class SessionCreate(BaseModel):
     trainer: str
     num_people: int = 1
     partner_email: str | None = None
+    activities: list["SessionActivityInput"] = []
 
     @field_validator('trainer')
     @classmethod
@@ -40,6 +41,7 @@ class Session(SessionBase):
     partner_name: str | None = None
     num_people: int = 1
     is_owner: bool = True
+    activities: list["SessionActivityRead"] = []
     model_config = {
         "from_attributes": True
     }
@@ -215,3 +217,139 @@ class Package(PackageBase):
     model_config = {
         "from_attributes": True
     }
+
+
+# --------------------
+# Activity Tracking Schemas
+# --------------------
+
+ALLOWED_FIELD_TYPES = {"integer", "decimal", "duration", "text"}
+
+
+class CategoryFieldRead(BaseModel):
+    id: int
+    key: str
+    label: str
+    field_type: str
+    unit: str | None = None
+    is_required: bool
+    sort_order: int
+    model_config = {"from_attributes": True}
+
+
+class ActivityCategoryRead(BaseModel):
+    id: int
+    name: str
+    slug: str
+    sort_order: int
+    fields: list[CategoryFieldRead] = []
+    model_config = {"from_attributes": True}
+
+
+class ActivityRead(BaseModel):
+    id: int
+    category_id: int
+    name: str
+    is_active: bool
+    model_config = {"from_attributes": True}
+
+
+class ActivityCreate(BaseModel):
+    category_id: int
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v):
+        if not v or not v.strip():
+            raise ValueError("Activity name is required and cannot be empty")
+        return v.strip()
+
+
+class SessionActivityInput(BaseModel):
+    # id present => update existing row; absent => insert
+    id: int | None = None
+    activity_id: int
+    values: dict = {}
+    notes: str | None = None
+
+
+class SessionActivityRead(BaseModel):
+    id: int
+    activity_id: int
+    activity_name: str
+    category_id: int
+    category_name: str
+    values: dict = {}
+    notes: str | None = None
+    sort_order: int
+    model_config = {"from_attributes": True}
+
+
+# ---- Admin management schemas ----
+
+class CategoryCreate(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v):
+        if not v or not v.strip():
+            raise ValueError("Category name is required")
+        return v.strip()
+
+
+class CategoryUpdate(BaseModel):
+    name: str | None = None
+    is_active: bool | None = None
+    sort_order: int | None = None
+
+
+class CategoryFieldCreate(BaseModel):
+    key: str
+    label: str
+    field_type: str
+    unit: str | None = None
+    is_required: bool = False
+    sort_order: int = 0
+
+    @field_validator("key")
+    @classmethod
+    def validate_key(cls, v):
+        v = (v or "").strip().lower()
+        if not v:
+            raise ValueError("Field key is required")
+        if not all(c.isalnum() or c == "_" for c in v):
+            raise ValueError("Field key must be alphanumeric/underscore")
+        return v
+
+    @field_validator("field_type")
+    @classmethod
+    def validate_type(cls, v):
+        if v not in ALLOWED_FIELD_TYPES:
+            raise ValueError(f"field_type must be one of {sorted(ALLOWED_FIELD_TYPES)}")
+        return v
+
+
+class CategoryFieldUpdate(BaseModel):
+    label: str | None = None
+    unit: str | None = None
+    is_required: bool | None = None
+    is_active: bool | None = None
+    sort_order: int | None = None
+
+
+class ActivityUpdate(BaseModel):
+    name: str | None = None
+    is_active: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v):
+        if v is not None and (not v or not v.strip()):
+            raise ValueError("Activity name cannot be empty")
+        return v.strip() if v else v
+
+
+SessionCreate.model_rebuild()
+Session.model_rebuild()

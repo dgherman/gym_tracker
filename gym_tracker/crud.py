@@ -5,6 +5,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from gym_tracker import models, schemas
+from gym_tracker import activities as activities_mod
 
 
 def _user_purchase_filter(user_id: int):
@@ -94,6 +95,17 @@ def _annotate_session(sess, purchase, user_id: int):
         if purchase.logged_by_user_id and hasattr(purchase, 'logged_by_user') and purchase.logged_by_user:
             sess.partner_name = purchase.logged_by_user.full_name or purchase.logged_by_user.email
             sess.partner_email = purchase.logged_by_user.email
+
+def _annotate_session_activities(db, sess):
+    """Attach activity_name, category_id, category_name onto each
+    SessionActivity so the SessionActivityRead schema can serialize it."""
+    for sa in sess.activities:
+        activity = sa.activity or db.get(models.Activity, sa.activity_id)
+        sa.activity_name = activity.name if activity else "(unknown)"
+        category = db.get(models.ActivityCategory, activity.category_id) if activity else None
+        sa.category_id = category.id if category else 0
+        sa.category_name = category.name if category else "(unknown)"
+
 
 # --------------------
 # Purchase CRUD
@@ -207,13 +219,14 @@ def create_session(
     created_by_user_id: Optional[int] = None,
     partner_email: Optional[str] = None,
     num_people: int = 1,
+    activities: Optional[list] = None,
 ):
     """
     Creates a session by consuming one matching purchase (oldest first),
-    and records who created it (created_by_user_id).
-    Consumes from user's own packs or packs where they are partner.
+    records who created it, and optionally attaches activities.
+    The purchase decrement + session + activities are committed atomically:
+    a bad activity raises ValueError before commit and nothing is persisted.
     """
-    # Validate trainer is not empty
     if not trainer or not trainer.strip():
         raise ValueError("Trainer name is required and cannot be empty")
     pack_q = (
@@ -232,7 +245,6 @@ def create_session(
     if not purchase:
         raise ValueError("No available purchase with remaining sessions for this duration")
 
-    # Resolve per-session partner override
     session_partner_id = None
     if partner_email:
         session_partner_id = _resolve_partner(db, partner_email)
@@ -247,13 +259,20 @@ def create_session(
         partner_user_id=session_partner_id,
     )
     db.add(db_session)
+    db.flush()  # assign db_session.id without committing
+
+    if activities:
+        # Raises ValueError on bad data -> caller/endpoint maps to 400; no commit happened
+        activities_mod.reconcile_session_activities(
+            db, db_session, activities, created_by_user_id=created_by_user_id
+        )
+
     db.commit()
     db.refresh(db_session)
 
-    # Expose whether that purchase is now exhausted
     db_session.purchase_exhausted = (purchase.sessions_remaining == 0)
-    # Annotate partner info for response
     _annotate_session(db_session, purchase, created_by_user_id)
+    _annotate_session_activities(db, db_session)
     return db_session
 
 
@@ -278,6 +297,7 @@ def get_sessions(
         sess.purchase_exhausted = (purchase.sessions_remaining == 0)
         if user_id is not None:
             _annotate_session(sess, purchase, user_id)
+        _annotate_session_activities(db, sess)
     return sessions
 
 

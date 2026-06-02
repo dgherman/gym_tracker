@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Activity Management - Admin Console</title>
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+  >
+</head>
+<body class="bg-light">
+  {% include "_nav.html" %}
+  <div class="container py-4">
+    <div class="row">
+      <div class="col-12">
+        <nav aria-label="breadcrumb">
+          <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/">Main App</a></li>
+            <li class="breadcrumb-item"><a href="/admin">Admin Console</a></li>
+            <li class="breadcrumb-item active" aria-current="page">Activity Management</li>
+          </ol>
+        </nav>
+
+        <h1 class="mb-4">Activity Management</h1>
+      </div>
+    </div>
+
+    <!-- Notification Area -->
+    <div id="notification"></div>
+
+    <!-- Add Category Card -->
+    <div class="row mb-4">
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header">
+            <h5 class="card-title mb-0">Add Category</h5>
+          </div>
+          <div class="card-body">
+            <form onsubmit="event.preventDefault(); addCategory()">
+              <div class="row g-2 align-items-end">
+                <div class="col-md-6">
+                  <label for="newCategoryName" class="form-label">Category Name</label>
+                  <input type="text" class="form-control" id="newCategoryName" required
+                         placeholder="e.g., Cardio, Strength, Flexibility">
+                </div>
+                <div class="col-auto">
+                  <button type="submit" class="btn btn-success">Add Category</button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Categories -->
+    {% for c in categories %}
+    <div class="row mb-4">
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header">
+            <h5 class="card-title mb-0">{{ c.name }}</h5>
+          </div>
+          <div class="card-body">
+
+            <!-- Fields List -->
+            <h6 class="text-muted mb-2">Fields</h6>
+            {% if c.fields %}
+            <ul class="list-group list-group-flush mb-3">
+              {% for f in c.fields %}
+              <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                <span>
+                  <strong>{{ f.label }}</strong> &mdash; {{ f.field_type }}
+                  {% if f.unit %}({{ f.unit }}){% endif %}
+                  {% if f.is_required %}<span class="badge bg-warning text-dark ms-1">required</span>{% endif %}
+                  {% if not f.is_active %}<span class="badge bg-secondary ms-1">inactive</span>{% endif %}
+                </span>
+                {% if f.is_active %}
+                <button class="btn btn-sm btn-outline-warning"
+                        onclick="deleteField({{ c.id }}, {{ f.id }})">
+                  Deactivate
+                </button>
+                {% endif %}
+              </li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <p class="text-muted small">No fields defined yet.</p>
+            {% endif %}
+
+            <!-- Add Field Form -->
+            <h6 class="text-muted mb-2">Add Field</h6>
+            <form onsubmit="event.preventDefault(); addField({{ c.id }})">
+              <div class="row g-2 mb-2">
+                <div class="col-md-3">
+                  <label class="form-label">Key</label>
+                  <input type="text" class="form-control form-control-sm" id="field-key-{{ c.id }}"
+                         placeholder="e.g., reps" required>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label">Label</label>
+                  <input type="text" class="form-control form-control-sm" id="field-label-{{ c.id }}"
+                         placeholder="e.g., Reps" required>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label">Type</label>
+                  <select class="form-select form-select-sm" id="field-type-{{ c.id }}">
+                    <option value="integer">integer</option>
+                    <option value="decimal">decimal</option>
+                    <option value="duration">duration</option>
+                    <option value="text">text</option>
+                  </select>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label">Unit</label>
+                  <input type="text" class="form-control form-control-sm" id="field-unit-{{ c.id }}"
+                         placeholder="e.g., lbs">
+                </div>
+                <div class="col-md-1">
+                  <label class="form-label">Order</label>
+                  <input type="number" class="form-control form-control-sm" id="field-order-{{ c.id }}"
+                         placeholder="1" min="0">
+                </div>
+                <div class="col-md-1 d-flex align-items-end">
+                  <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" id="field-required-{{ c.id }}">
+                    <label class="form-check-label small" for="field-required-{{ c.id }}">Req.</label>
+                  </div>
+                </div>
+              </div>
+              <button type="submit" class="btn btn-sm btn-primary">Add Field</button>
+            </form>
+
+            <hr>
+
+            <!-- Activities -->
+            <h6 class="text-muted mb-2">Activities</h6>
+            <div id="activities-{{ c.id }}">
+              <div class="text-muted small">Loading...</div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+
+    {% if not categories %}
+    <div class="row">
+      <div class="col-12">
+        <div class="alert alert-info">No categories yet. Add one above.</div>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // ---- helpers --------------------------------------------------------
+    function escapeHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+    async function postJSON(url, body, method = 'POST') {
+      const r = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!r.ok) {
+        let e = {};
+        try { e = await r.json(); } catch (_) {}
+        alert(e.detail || 'Error');
+        return null;
+      }
+      return r.json();
+    }
+
+    async function deleteField(catId, fieldId) {
+      if (!confirm('Deactivate this field? Existing logs keep their values.')) return;
+      const r = await fetch(`/api/admin/categories/${catId}/fields/${fieldId}`, {
+        method: 'DELETE',
+        headers: { accept: 'application/json' }
+      });
+      if (r.ok) location.reload(); else alert('Failed to deactivate field');
+    }
+
+    async function loadActivities(catId) {
+      const r = await fetch('/api/activities?category_id=' + catId, {
+        headers: { accept: 'application/json' }
+      });
+      const acts = await r.json();
+      const wrap = document.getElementById('activities-' + catId);
+      if (!wrap) return;
+      wrap.innerHTML = acts.length
+        ? acts.map(a => `<div class="d-flex justify-content-between align-items-center small border-bottom py-1">
+            <span>${escapeHtml(a.name)}</span>
+            <span>
+              <button class="btn btn-sm btn-link p-0 me-2" onclick="renameActivity(${a.id})">Rename</button>
+              <button class="btn btn-sm btn-link text-danger p-0" onclick="deactivateActivity(${a.id})">Deactivate</button>
+            </span></div>`).join('')
+        : '<div class="text-muted small">No activities yet.</div>';
+    }
+
+    async function deactivateActivity(id) {
+      if (!confirm('Deactivate this activity?')) return;
+      if (await postJSON('/api/admin/activities/' + id, { is_active: false }, 'PATCH')) location.reload();
+    }
+
+    async function renameActivity(id) {
+      const name = prompt('New activity name:');
+      if (!name) return;
+      if (await postJSON('/api/admin/activities/' + id, { name }, 'PATCH')) location.reload();
+    }
+
+    async function addCategory() {
+      const name = document.getElementById('newCategoryName').value.trim();
+      if (!name) return;
+      if (await postJSON('/api/admin/categories', { name })) location.reload();
+    }
+
+    async function addField(catId) {
+      const key = document.getElementById('field-key-' + catId).value.trim();
+      const label = document.getElementById('field-label-' + catId).value.trim();
+      const field_type = document.getElementById('field-type-' + catId).value;
+      const unit = document.getElementById('field-unit-' + catId).value.trim() || null;
+      const is_required = document.getElementById('field-required-' + catId).checked;
+      const sortVal = document.getElementById('field-order-' + catId).value;
+      const sort_order = sortVal !== '' ? parseInt(sortVal, 10) : 0;
+      if (!key || !label) return;
+      if (await postJSON(`/api/admin/categories/${catId}/fields`, { key, label, field_type, unit, is_required, sort_order })) location.reload();
+    }
+
+    function showNotification(message, type) {
+      const notification = document.getElementById('notification');
+      notification.innerHTML = `
+        <div class="alert alert-${type} alert-dismissible fade show" role="alert">
+          ${message}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+      `;
+    }
+
+    // ---- on load --------------------------------------------------------
+    document.addEventListener('DOMContentLoaded', () => {
+      {% for c in categories %}loadActivities({{ c.id }});
+      {% endfor %}
+    });
+  </script>
+</body>
+</html>

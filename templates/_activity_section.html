@@ -1,0 +1,231 @@
+<!-- Reusable optional activity logging section. Include once per page. -->
+<div class="border rounded mt-3">
+  <button type="button" class="btn btn-link text-decoration-none w-100 text-start fw-bold"
+          data-bs-toggle="collapse" data-bs-target="#actSectionBody">
+    Log activities <span class="text-muted fw-normal">(optional)</span>
+  </button>
+  <div class="collapse" id="actSectionBody">
+    <div class="p-2">
+      <ul class="list-group mb-2" id="actList"></ul>
+
+      <div class="border-top pt-2">
+        <div class="row g-2">
+          <div class="col-12">
+            <select id="actCategory" class="form-select form-select-sm">
+              <option value="">-- Category --</option>
+            </select>
+          </div>
+          <div class="col-12">
+            <input id="actActivity" list="actActivityList" class="form-control form-control-sm"
+                   placeholder="Activity (type to search or add new)">
+            <datalist id="actActivityList"></datalist>
+          </div>
+          <div class="col-12" id="actFields"></div>
+          <div class="col-12">
+            <input id="actNote" class="form-control form-control-sm" placeholder="Note (optional)">
+          </div>
+          <div class="col-12">
+            <button type="button" id="actAddBtn" class="btn btn-sm btn-outline-success">+ Add to session</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function escapeHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+const ActivitySection = (function () {
+  let categories = [];          // [{id,name,fields:[{key,label,field_type,unit,is_required}]}]
+  let activitiesByCat = {};     // catId -> [{id,name}]
+  let rows = [];                // pending {id?, category_id, activity_id, activity_name, category_name, values, notes}
+  let editingIndex = null;      // index of the row currently being edited, or null
+
+  function fieldMap() {
+    const m = {};
+    categories.forEach(c => c.fields.forEach(f => { m[c.id + ':' + f.key] = f; }));
+    return m;
+  }
+
+  function fmtValue(catName, f, val) {
+    if (f.field_type === 'duration') {
+      const s = parseInt(val) || 0;
+      const mm = Math.floor(s / 60), ss = s % 60;
+      return mm + ':' + String(ss).padStart(2, '0');
+    }
+    return val + (f.unit ? ' ' + f.unit : '');
+  }
+
+  async function load() {
+    const res = await fetch('/api/categories', { headers: { accept: 'application/json' } });
+    categories = await res.json();
+    const sel = document.getElementById('actCategory');
+    if (sel) {
+      sel.innerHTML = '<option value="">-- Category --</option>' +
+        categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+    }
+  }
+
+  async function loadActivities(catId) {
+    if (!activitiesByCat[catId]) {
+      const res = await fetch('/api/activities?category_id=' + catId, { headers: { accept: 'application/json' } });
+      activitiesByCat[catId] = await res.json();
+    }
+    const dl = document.getElementById('actActivityList');
+    dl.innerHTML = activitiesByCat[catId].map(a => `<option value="${escapeHtml(a.name)}">`).join('');
+  }
+
+  function renderFields(catId) {
+    const cat = categories.find(c => c.id == catId);
+    const wrap = document.getElementById('actFields');
+    if (!cat) { wrap.innerHTML = ''; return; }
+    wrap.innerHTML = '<div class="row g-1">' + cat.fields.map(f => `
+      <div class="col">
+        <input class="form-control form-control-sm act-field" data-key="${f.key}"
+               data-type="${f.field_type}"
+               placeholder="${f.label}${f.unit ? ' (' + f.unit + ')' : ''}${f.is_required ? ' *' : ''}">
+      </div>`).join('') + '</div>';
+  }
+
+  function renderRows() {
+    const ul = document.getElementById('actList');
+    if (!rows.length) { ul.innerHTML = ''; return; }
+    ul.innerHTML = rows.map((r, i) => {
+      const parts = Object.entries(r.values).map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(v)}`).join(' · ');
+      const note = r.notes ? ` <span class="text-muted">· ${escapeHtml(r.notes)}</span>` : '';
+      const editing = (editingIndex === i) ? ' bg-warning-subtle' : '';
+      return `<li class="list-group-item d-flex justify-content-between align-items-center py-1 small${editing}">
+        <span><strong>${escapeHtml(r.activity_name)}</strong> <span class="text-muted">· ${escapeHtml(r.category_name)}</span> ${parts}${note}</span>
+        <span class="d-flex gap-2">
+          <button type="button" class="btn btn-sm btn-link p-0" onclick="ActivitySection.edit(${i})">Edit</button>
+          <button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="ActivitySection.remove(${i})">✕</button>
+        </span>
+      </li>`;
+    }).join('');
+  }
+
+  async function ensureActivity(catId, name) {
+    const list = activitiesByCat[catId] || [];
+    const found = list.find(a => a.name.toLowerCase() === name.toLowerCase());
+    if (found) return found;
+    const res = await fetch('/api/activities', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ category_id: parseInt(catId), name })
+    });
+    if (!res.ok) { alert('Could not create activity'); return null; }
+    const created = await res.json();
+    activitiesByCat[catId] = list.concat([created]);
+    return created;
+  }
+
+  async function add() {
+    const catSel = document.getElementById('actCategory');
+    const catId = catSel.value;
+    const name = document.getElementById('actActivity').value.trim();
+    if (!catId || !name) { alert('Pick a category and activity'); return; }
+    const cat = categories.find(c => c.id == catId);
+
+    const values = {};
+    let missingRequired = null;
+    document.querySelectorAll('#actFields .act-field').forEach(inp => {
+      const v = inp.value.trim();
+      const f = cat.fields.find(x => x.key === inp.dataset.key);
+      if (v !== '') values[inp.dataset.key] = v;
+      else if (f && f.is_required) missingRequired = f.label;
+    });
+    if (missingRequired) { alert(`"${missingRequired}" is required`); return; }
+
+    const activity = await ensureActivity(catId, name);
+    if (!activity) return;
+
+    const row = {
+      id: (editingIndex !== null && rows[editingIndex]) ? rows[editingIndex].id : undefined,
+      category_id: cat.id,
+      activity_id: activity.id,
+      activity_name: activity.name,
+      category_name: cat.name,
+      values,
+      notes: document.getElementById('actNote').value.trim() || null,
+    };
+    if (editingIndex !== null) {
+      rows[editingIndex] = row;     // update in place, preserving its id
+    } else {
+      rows.push(row);
+    }
+    clearForm();
+    renderRows();
+  }
+
+  // Load a row back into the form for editing.
+  function edit(i) {
+    const r = rows[i];
+    if (!r) return;
+    editingIndex = i;
+    const catSel = document.getElementById('actCategory');
+    catSel.value = r.category_id;
+    renderFields(r.category_id);
+    loadActivities(r.category_id);
+    document.getElementById('actActivity').value = r.activity_name;
+    document.getElementById('actNote').value = r.notes || '';
+    document.querySelectorAll('#actFields .act-field').forEach(inp => {
+      inp.value = (r.values && r.values[inp.dataset.key] != null) ? r.values[inp.dataset.key] : '';
+    });
+    document.getElementById('actAddBtn').textContent = 'Save changes';
+    renderRows();  // highlight the row being edited
+  }
+
+  // Clear the input area and exit edit mode.
+  function clearForm() {
+    editingIndex = null;
+    document.getElementById('actActivity').value = '';
+    document.getElementById('actNote').value = '';
+    document.querySelectorAll('#actFields .act-field').forEach(i => i.value = '');
+    document.getElementById('actAddBtn').textContent = '+ Add to session';
+  }
+
+  function remove(i) {
+    rows.splice(i, 1);
+    if (editingIndex !== null) clearForm();  // cancel any in-progress edit (indices shifted)
+    renderRows();
+  }
+
+  function collect() {
+    return rows.map(r => ({
+      id: r.id || undefined,
+      activity_id: r.activity_id,
+      values: r.values,
+      notes: r.notes,
+    }));
+  }
+
+  function reset() { rows = []; clearForm(); renderRows(); }
+
+  function prefill(serverRows) {
+    // serverRows from /history/sessions/ : {id, activity_id, activity_name, category_id, category_name, values, notes}
+    rows = (serverRows || []).map(r => ({
+      id: r.id,
+      category_id: r.category_id,
+      activity_id: r.activity_id,
+      activity_name: r.activity_name,
+      category_name: r.category_name,
+      values: r.values || {},
+      notes: r.notes || null,
+    }));
+    clearForm();
+    renderRows();
+  }
+
+  function init() {
+    const catSel = document.getElementById('actCategory');
+    if (!catSel) return;
+    catSel.addEventListener('change', async (e) => {
+      const id = e.target.value;
+      renderFields(id);
+      if (id) await loadActivities(id);
+    });
+    document.getElementById('actAddBtn').addEventListener('click', add);
+  }
+
+  return { load, init, add, edit, remove, collect, reset, prefill, fieldMap, fmtValue };
+})();
+</script>
