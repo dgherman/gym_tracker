@@ -83,3 +83,69 @@ def test_list_active_activities_in_category(db):
     rows = activities.list_activities(db_, category_id=act.category_id)
     names = {r.name for r in rows}
     assert "Bench Press" in names and "Deadlift" in names
+
+
+def _make_session(db_):
+    # Minimal purchase + session to attach activities to
+    pur = models.Purchase(duration_minutes=30, total_sessions=10, sessions_remaining=10)
+    db_.add(pur)
+    db_.flush()
+    sess = models.Session(purchase_id=pur.id, duration_minutes=30, trainer="X")
+    db_.add(sess)
+    db_.commit()
+    db_.refresh(sess)
+    return sess
+
+
+def test_reconcile_inserts_rows(db):
+    db_, act = db
+    sess = _make_session(db_)
+    items = [schemas.SessionActivityInput(activity_id=act.id, values={"reps": "8", "weight": "60"})]
+    activities.reconcile_session_activities(db_, sess, items)
+    db_.commit()
+    db_.refresh(sess)
+    assert len(sess.activities) == 1
+    assert sess.activities[0].values == {"reps": 8, "weight": 60.0}
+
+
+def test_reconcile_updates_and_deletes(db):
+    db_, act = db
+    sess = _make_session(db_)
+    activities.reconcile_session_activities(
+        db_, sess, [schemas.SessionActivityInput(activity_id=act.id, values={"reps": "5"})]
+    )
+    db_.commit(); db_.refresh(sess)
+    existing_id = sess.activities[0].id
+
+    # Update the existing row, no new rows -> nothing else
+    activities.reconcile_session_activities(
+        db_, sess, [schemas.SessionActivityInput(id=existing_id, activity_id=act.id, values={"reps": "10"})]
+    )
+    db_.commit(); db_.refresh(sess)
+    assert len(sess.activities) == 1
+    assert sess.activities[0].values == {"reps": 10}
+
+    # Empty list -> row removed
+    activities.reconcile_session_activities(db_, sess, [])
+    db_.commit(); db_.refresh(sess)
+    assert len(sess.activities) == 0
+
+
+def test_reconcile_foreign_row_id_rejected(db):
+    db_, act = db
+    sess = _make_session(db_)
+    with pytest.raises(ValueError, match="not on this session"):
+        activities.reconcile_session_activities(
+            db_, sess, [schemas.SessionActivityInput(id=999, activity_id=act.id, values={"reps": "8"})]
+        )
+
+
+def test_reconcile_inactive_activity_rejected(db):
+    db_, act = db
+    sess = _make_session(db_)
+    act.is_active = False
+    db_.commit()
+    with pytest.raises(ValueError, match="not available|inactive"):
+        activities.reconcile_session_activities(
+            db_, sess, [schemas.SessionActivityInput(activity_id=act.id, values={"reps": "8"})]
+        )

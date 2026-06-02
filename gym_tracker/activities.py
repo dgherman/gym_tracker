@@ -207,3 +207,46 @@ def soft_delete_field(db: Session, field_id: int):
     field.is_active = False
     db.commit()
     return field
+
+
+# --------------------
+# Session-activity reconciliation
+# --------------------
+
+def reconcile_session_activities(db: Session, session: models.Session, items, *, created_by_user_id=None):
+    """Reconcile a session's activities to the desired set `items`
+    (list of schemas.SessionActivityInput). Upsert by id, delete omitted.
+    Validates each row's values; raises ValueError on any problem.
+    Does NOT commit — caller commits so the whole session edit is atomic."""
+    existing = {sa.id: sa for sa in session.activities}
+    seen_ids = set()
+
+    for idx, item in enumerate(items):
+        activity = db.get(models.Activity, item.activity_id)
+        if not activity or not activity.is_active:
+            raise ValueError("Selected activity is not available (inactive or unknown)")
+        cleaned = validate_activity_values(db, activity, item.values)
+
+        if item.id is not None:
+            sa = existing.get(item.id)
+            if sa is None:
+                raise ValueError("Activity row is not on this session")
+            sa.activity_id = activity.id
+            sa.values = cleaned
+            sa.notes = item.notes
+            sa.sort_order = idx
+            seen_ids.add(item.id)
+        else:
+            sa = models.SessionActivity(
+                session_id=session.id,
+                activity_id=activity.id,
+                values=cleaned,
+                notes=item.notes,
+                sort_order=idx,
+                created_at=datetime.now(timezone.utc),
+            )
+            db.add(sa)
+
+    for sid, sa in existing.items():
+        if sid not in seen_ids:
+            db.delete(sa)
