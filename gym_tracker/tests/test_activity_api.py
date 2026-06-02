@@ -100,3 +100,24 @@ def test_admin_create_category_and_field(client):
         assert rf.json()["key"] == "minutes"
     finally:
         main.app.dependency_overrides.pop(main.require_admin, None)
+
+
+def test_admin_activities_page_renders(client):
+    admin_id = client._ids["admin"]
+
+    def fake_admin():
+        d = TestSessionLocal()
+        try:
+            return d.get(models.User, admin_id)
+        finally:
+            d.close()
+
+    main.app.dependency_overrides[main.require_admin] = fake_admin
+    try:
+        # accept: application/json bypasses LoginRequiredMiddleware so the
+        # route handler (and its require_admin override) actually runs.
+        r = client.get("/admin/activities", headers={"accept": "application/json"})
+        assert r.status_code == 200, r.text
+        assert "Strength" in r.text  # seeded category is rendered
+    finally:
+        main.app.dependency_overrides.pop(main.require_admin, None)
