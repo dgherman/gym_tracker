@@ -32,13 +32,17 @@ gym_tracker/
 │   ├── auth.py                     # OAuth routes + partner auto-linking on signup
 │   ├── config.py                   # Settings (env vars, DB config, @lru_cache)
 │   ├── crud.py                     # Database CRUD operations + partner query helpers
+│   ├── activities.py               # Activity/category/field CRUD, value validation, session-activity reconciliation
 │   ├── database.py                 # SQLAlchemy engine + session factory
-│   ├── models.py                   # ORM models (5 tables)
+│   ├── models.py                   # ORM models (9 tables)
 │   ├── schemas.py                  # Pydantic request/response schemas
 │   └── tests/
-│       └── test_crud.py            # Unit tests (in-memory SQLite)
+│       ├── test_crud.py            # Unit tests (in-memory SQLite)
+│       ├── test_activities.py      # Activity validation/CRUD/reconcile unit tests
+│       └── test_activity_api.py    # Activity endpoint + admin-guard integration tests
 ├── templates/                      # Jinja2 HTML templates
 │   ├── _nav.html                   # Shared navigation component
+│   ├── _activity_section.html      # Shared optional activity-logging partial (markup + vanilla JS ActivitySection)
 │   ├── index.html                  # Dashboard (session logging, purchases, partner email)
 │   ├── history.html                # Session/purchase history with partner badges
 │   ├── reports.html                # Analytics with Chart.js pie charts (incl. partner chart)
@@ -47,7 +51,8 @@ gym_tracker/
 │   └── admin/                      # Admin-only pages
 │       ├── index.html              # Admin dashboard
 │       ├── trainers.html           # Trainer CRUD
-│       └── packages.html           # Package CRUD
+│       ├── packages.html           # Package CRUD
+│       └── activities.html         # Activity library + category/field management
 ├── alembic/                        # Database migrations
 │   └── versions/                   # Migration scripts
 ├── docs/plans/                     # Design documents
@@ -88,6 +93,41 @@ gym_tracker/
                                           └──────────────┘
 ```
 
+### Activity Tracking Schema
+
+Four additional tables support optional structured activity logging per session:
+
+```
+┌─────────────────────┐     ┌─────────────────────┐
+│ activity_categories │     │   category_fields   │
+├─────────────────────┤     ├─────────────────────┤
+│ id (PK)             │◄────│ category_id (FK)    │
+│ name (unique)       │     │ id (PK)             │
+│ slug                │     │ key                 │  (JSON key)
+│ sort_order          │     │ label               │
+│ is_active           │     │ field_type          │
+└─────────────────────┘     │ unit                │
+       │                    │ is_required         │
+       │                    │ is_active           │
+       │                    │ sort_order          │
+       ▼                    └─────────────────────┘
+┌─────────────────────┐     ┌─────────────────────┐
+│      activities     │     │  session_activities │
+├─────────────────────┤     ├─────────────────────┤
+│ id (PK)             │◄────│ activity_id (FK)    │
+│ category_id (FK)    │     │ id (PK)             │
+│ name                │     │ session_id (FK)────►│ sessions (cascade)
+│ created_by_user_id──┼──►  │ values (JSON)       │
+│ is_active           │users│ notes               │
+└─────────────────────┘     │ sort_order          │
+                            └─────────────────────┘
+```
+
+- **activity_categories**: Admin-managed buckets (seeded: Strength, Cardio, Mobility, Other). Soft-delete via `is_active`.
+- **category_fields**: The metric schema for a category. `key` is the stable identifier used in the stored JSON; `field_type` ∈ `integer | decimal | duration | text` (`duration` stored as integer seconds). Soft-delete via `is_active` — a deactivated field's values stay in old logs (still rendered/editable) but it's dropped from the logging form and from required-field checks.
+- **activities**: Global library. `UNIQUE(category_id, name)` plus case-insensitive dedup in CRUD (recreating a name returns/​reactivates the existing row). `created_by_user_id` tracks the originator; every activity is usable by all users. Soft-delete via `is_active`.
+- **session_activities**: One row per activity per session. `values` is a JSON object keyed by `category_fields.key`, validated server-side against the category's **active** fields at write time. Cascades on session delete via the ORM relationship (`cascade="all, delete-orphan"`).
+
 ## Two-Person Session Sharing
 
 Packages with `num_people >= 2` support partner sharing:
@@ -110,7 +150,7 @@ Key helpers in `crud.py`:
 
 1. **Auth flow**: Google OIDC via Authlib -> upsert user by `google_sub` -> auto-link partner purchases -> set session cookie
 2. **Session**: Signed cookie (`gt_session`) via Starlette SessionMiddleware
-3. **Middleware**: `LoginRequiredMiddleware` protects all routes except public paths (`/login`, `/auth/callback`, `/logout`, `/healthz`, `/privacy`, `/terms`, `/me`)
+3. **Middleware**: `LoginRequiredMiddleware` protects all routes except public paths (`/login`, `/auth/callback`, `/logout`, `/healthz`, `/privacy`, `/terms`, `/me`, `/dev/login`). Requests sending `Accept: application/json` bypass the browser login redirect.
 4. **Roles**: `user.role` field — `"client"` (default) or `"admin"`
 5. **Admin guard**: `require_admin` FastAPI dependency on admin endpoints
 6. **Email allowlist**: Optional `ALLOWED_EMAILS` env var restricts who can sign up
@@ -127,7 +167,9 @@ Key helpers in `crud.py`:
 | GET | `/admin` | admin | Admin dashboard |
 | GET | `/admin/trainers` | admin | Trainer management |
 | GET | `/admin/packages` | admin | Package management |
+| GET | `/admin/activities` | admin | Activity library + category/field management |
 | GET | `/privacy`, `/terms` | no | Legal pages |
+| GET | `/dev/login` | no | Dev-only auto-login bypass; 404 unless `DEV_LOGIN` env is truthy |
 
 ### Auth
 | Method | Path | Description |
@@ -158,7 +200,18 @@ Key helpers in `crud.py`:
 | POST | `/api/packages/` | admin | Create package |
 | PUT | `/api/packages/{id}` | admin | Update package |
 | DELETE | `/api/packages/{id}` | admin | Soft-delete package |
+| GET | `/api/categories` | yes | List active categories with their active fields |
+| GET | `/api/activities` | yes | List active activities (optional `category_id`) |
+| POST | `/api/activities` | yes | Create a global activity (deduped case-insensitively) |
+| POST | `/api/admin/categories` | admin | Create category |
+| PATCH | `/api/admin/categories/{id}` | admin | Update category (name/active/sort) |
+| POST | `/api/admin/categories/{id}/fields` | admin | Create field |
+| PATCH | `/api/admin/categories/{id}/fields/{fid}` | admin | Update field |
+| DELETE | `/api/admin/categories/{id}/fields/{fid}` | admin | Soft-delete field |
+| PATCH | `/api/admin/activities/{id}` | admin | Rename / soft-delete activity |
 | GET | `/healthz` | no | Health check |
+
+`POST /sessions/` and `POST /history/api/edit/session/{id}` also accept an optional `activities[]` array (`{id?, activity_id, values, notes}`) reconciled in the same transaction.
 
 ## Key Patterns
 
@@ -170,7 +223,8 @@ Key helpers in `crud.py`:
 - **ORM safety**: `_annotate_purchases` calls `db.expunge()` before mutating `cost` on partner views to prevent flushing $0 to the database
 - **Config**: `config.py` uses `@lru_cache` for a singleton Settings object from env vars
 - **Frontend**: Vanilla JS with Fetch API, Bootstrap modals for forms, Chart.js for reports (3 pie charts: by trainer, by duration, by partner)
-- **Testing**: Pytest with in-memory SQLite, tests in `gym_tracker/tests/`
+- **Testing**: Pytest with in-memory SQLite, tests in `gym_tracker/tests/` (API tests use `TestClient` + `StaticPool` and override `get_db`/`require_admin`)
+- **Activity reconciliation**: Session create/edit accept a complete `activities[]` array; `gym_tracker/activities.py::reconcile_session_activities` upserts by id, inserts new rows, deletes omitted ones — all without committing, so the caller's single commit keeps the session + activities atomic. Values are validated against the category's active field schema before persistence; `session_activities` cascade-delete with the session.
 
 ## CI/CD Pipeline
 
@@ -189,3 +243,4 @@ Key helpers in `crud.py`:
 | `ALLOWED_EMAILS` | Comma-separated email allowlist (optional) |
 | `BASE_URL` | Application base URL |
 | `DATABASE_URL` | Database connection string |
+| `DEV_LOGIN` | Dev-only: when truthy, enables `GET /dev/login` to auto-login a seeded admin (NEVER set in production) |
