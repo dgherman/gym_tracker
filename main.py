@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
+from gym_tracker import activities as activities_mod
 from gym_tracker import crud, models, schemas
 from gym_tracker.auth import router as auth_router
 from gym_tracker.config import get_settings
@@ -173,7 +174,7 @@ def create_session(
     session_in: schemas.SessionCreate,
     db: Session = Depends(get_db),
 ):
-    user_id = request.session.get("user_id")  # who is creating it
+    user_id = request.session.get("user_id")
     try:
         return crud.create_session(
             db,
@@ -182,6 +183,7 @@ def create_session(
             created_by_user_id=user_id,
             partner_email=session_in.partner_email,
             num_people=session_in.num_people,
+            activities=session_in.activities,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -296,6 +298,15 @@ async def api_edit_session(
     # Update editable fields
     s.session_date = datetime.fromisoformat(data["session_date"])
     s.trainer = data["trainer"]
+
+    # Reconcile activities if provided (full desired set)
+    if "activities" in data and data["activities"] is not None:
+        try:
+            items = [schemas.SessionActivityInput(**row) for row in data["activities"]]
+            activities_mod.reconcile_session_activities(db, s, items, created_by_user_id=user_id)
+        except (ValueError, TypeError) as e:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=str(e))
 
     db.commit()
     return {"success": True}
@@ -460,6 +471,40 @@ def delete_trainer(
 
 
 # -------------------------------------------------------------
+# Activity Tracking API endpoints
+# -------------------------------------------------------------
+
+@app.get("/api/categories", response_model=List[schemas.ActivityCategoryRead])
+def list_categories(db: Session = Depends(get_db)):
+    """Active categories with their active fields (drives the log form)."""
+    cats = activities_mod.list_categories(db)
+    # Hide inactive fields from the form payload
+    for c in cats:
+        c.fields = [f for f in c.fields if f.is_active]
+    return cats
+
+
+@app.get("/api/activities", response_model=List[schemas.ActivityRead])
+def list_activities(category_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """Active activities, optionally filtered by category."""
+    return activities_mod.list_activities(db, category_id=category_id)
+
+
+@app.post("/api/activities", response_model=schemas.ActivityRead)
+def create_activity(
+    request: Request,
+    activity_in: schemas.ActivityCreate,
+    db: Session = Depends(get_db),
+):
+    """Create a global activity (any authenticated user). Dedups by name."""
+    user_id = request.session.get("user_id")
+    try:
+        return activities_mod.create_activity(db, activity_in, created_by_user_id=user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# -------------------------------------------------------------
 # Admin Console
 # -------------------------------------------------------------
 
@@ -547,4 +592,98 @@ def admin_packages(
         request,
         "admin/packages.html",
         {"current_user": admin_user, "packages": packages}
+    )
+
+
+# -------------------------------------------------------------
+# Activity admin API + page
+# -------------------------------------------------------------
+
+@app.post("/api/admin/categories", response_model=schemas.ActivityCategoryRead)
+def admin_create_category(
+    category_in: schemas.CategoryCreate,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    return activities_mod.create_category(db, category_in)
+
+
+@app.patch("/api/admin/categories/{category_id}", response_model=schemas.ActivityCategoryRead)
+def admin_update_category(
+    category_id: int,
+    update: schemas.CategoryUpdate,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    cat = activities_mod.update_category(db, category_id, update)
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return cat
+
+
+@app.post("/api/admin/categories/{category_id}/fields", response_model=schemas.CategoryFieldRead)
+def admin_create_field(
+    category_id: int,
+    field_in: schemas.CategoryFieldCreate,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    try:
+        return activities_mod.create_field(db, category_id, field_in)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.patch("/api/admin/categories/{category_id}/fields/{field_id}", response_model=schemas.CategoryFieldRead)
+def admin_update_field(
+    category_id: int,
+    field_id: int,
+    update: schemas.CategoryFieldUpdate,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    field = activities_mod.update_field(db, field_id, update)
+    if not field:
+        raise HTTPException(status_code=404, detail="Field not found")
+    return field
+
+
+@app.delete("/api/admin/categories/{category_id}/fields/{field_id}", response_model=schemas.CategoryFieldRead)
+def admin_delete_field(
+    category_id: int,
+    field_id: int,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    field = activities_mod.soft_delete_field(db, field_id)
+    if not field:
+        raise HTTPException(status_code=404, detail="Field not found")
+    return field
+
+
+@app.patch("/api/admin/activities/{activity_id}", response_model=schemas.ActivityRead)
+def admin_update_activity(
+    activity_id: int,
+    update: schemas.ActivityUpdate,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    activity = activities_mod.update_activity(db, activity_id, update)
+    if not activity:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    return activity
+
+
+@app.get("/admin/activities", response_class=HTMLResponse)
+def admin_activities(
+    request: Request,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin activity/category/field management page."""
+    categories = activities_mod.list_categories(db)
+    return templates.TemplateResponse(
+        request,
+        "admin/activities.html",
+        {"current_user": admin_user, "categories": categories},
     )
