@@ -2,7 +2,8 @@
 
 **Date:** 2026-06-02
 **Status:** Approved (design), pending implementation plan
-**Scope:** Logging + basic display. Progress charts deferred to a later spec.
+**Scope:** Logging at session-create time + retroactive add/edit on existing
+sessions + basic display. Progress charts deferred to a later spec.
 
 ## Goal
 
@@ -20,7 +21,8 @@ users immediately.
   categories and define each category's metric fields.
 - **Granularity:** one row of values per logged activity per session (no
   per-set repetition).
-- **Scope:** capture + display in session history. No progress charts yet.
+- **Scope:** capture at log time, retroactively add/edit/remove on existing
+  sessions, and display in session history. No progress charts yet.
 - **Activity governance:** any user creates a global activity; admins can
   rename / deactivate (soft delete).
 
@@ -111,6 +113,14 @@ Session create (extended): the existing session-create endpoint accepts an
 optional `activities[]` array of `{activity_id, values, notes}`. Session and
 its `session_activities` rows are created in a single transaction.
 
+Session edit (extended): the existing
+`POST /history/api/edit/session/{session_id}` endpoint accepts an optional
+`activities[]` array of `{id?, activity_id, values, notes}` representing the
+**full desired set** for the session. Reconciliation in one transaction:
+rows with an `id` are updated, rows without are inserted, and existing
+`session_activities` not present in the payload are deleted. Ownership check
+is unchanged (already enforced by the endpoint).
+
 Admin-only (`/api/admin/*`, role check like existing admin endpoints):
 - `POST /api/admin/categories`, `PATCH /api/admin/categories/{id}`
 - `POST /api/admin/categories/{id}/fields`, `PATCH`/`DELETE` `.../fields/{fid}`
@@ -129,11 +139,15 @@ Admin-only (`/api/admin/*`, role check like existing admin endpoints):
 - Inline create: typing an unknown name offers create; `POST /api/activities`,
   auto-selects the new activity.
 - Activities are submitted together with the session (add-at-log-time).
-  Editing a past session's activities is out of scope for this spec.
 
 ### History (`templates/history.html`)
 - Each session shows its logged activities grouped by category, values rendered
   from the JSON + field labels/units (e.g. "Bench Press — 8 × 60kg").
+- **Retroactive edit:** the existing edit-session Bootstrap modal gains the
+  same "Log activities" section, prepopulated from the session's current
+  `session_activities`. The user can add, edit, or remove rows; submitting the
+  modal sends the full `activities[]` set to the edit endpoint. Reuses the same
+  add/field-rendering component as the log form.
 
 ### Admin (`templates/admin/`)
 - New **Activities** admin tab: list/add categories, manage a category's fields
@@ -148,15 +162,23 @@ Admin-only (`/api/admin/*`, role check like existing admin endpoints):
   `values` JSON — old logs still render.
 - **Duplicate activity name:** `UNIQUE(category_id, lower(name))`; inline-create
   returns the existing activity instead of erroring.
-- **Atomicity:** session + `session_activities` created in one transaction; a
-  bad activity row fails the whole log with a clear error.
-- **Empty section:** logging zero activities is valid and unchanged from today.
+- **Atomicity:** session + `session_activities` created/reconciled in one
+  transaction; a bad activity row fails the whole log/edit with a clear error.
+- **Edit reconciliation:** `activities[]` on edit is the full desired set —
+  upsert by `id`, delete omitted rows. A submitted `id` not belonging to this
+  session is rejected.
+- **Session delete:** deleting a session cascades to its `session_activities`
+  (FK `ondelete=CASCADE` / explicit child delete in the existing delete flow).
+- **Empty section:** logging or editing to zero activities is valid.
 
 ## Testing
 
 CRUD tests:
 - create activity (new + dedup returns existing)
 - log session with activities (values persisted, txn atomic)
+- edit session: add new activity, update existing row, remove omitted row
+  (reconciliation); `id` from another session rejected
+- delete session cascades its `session_activities`
 - value validation: required missing → error, wrong type → error, unknown key → error
 - soft-deleted field still renders in existing logs
 
@@ -167,6 +189,5 @@ Admin tests:
 ## Out of Scope (future specs)
 
 - Progress charts / per-activity trends over time
-- Editing activities on a past session
 - Per-set / interval repetition (multiple rows per activity)
 - Merging duplicate activities
