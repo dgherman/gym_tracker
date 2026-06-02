@@ -62,3 +62,24 @@ def test_optional_blank_is_omitted(db):
     db_, act = db
     cleaned = activities.validate_activity_values(db_, act, {"reps": "8", "weight": ""})
     assert cleaned == {"reps": 8}
+
+
+def test_create_activity_dedup_case_insensitive(db):
+    db_, act = db
+    a1 = activities.create_activity(db_, schemas.ActivityCreate(category_id=act.category_id, name="Squat"))
+    a2 = activities.create_activity(db_, schemas.ActivityCreate(category_id=act.category_id, name="squat"))
+    assert a1.id == a2.id  # dedup returns existing
+
+
+def test_create_activity_bad_category_raises(db):
+    db_, act = db
+    with pytest.raises(ValueError, match="category"):
+        activities.create_activity(db_, schemas.ActivityCreate(category_id=999, name="Nope"))
+
+
+def test_list_active_activities_in_category(db):
+    db_, act = db
+    activities.create_activity(db_, schemas.ActivityCreate(category_id=act.category_id, name="Deadlift"))
+    rows = activities.list_activities(db_, category_id=act.category_id)
+    names = {r.name for r in rows}
+    assert "Bench Press" in names and "Deadlift" in names
