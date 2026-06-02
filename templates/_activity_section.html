@@ -38,7 +38,8 @@ function escapeHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'
 const ActivitySection = (function () {
   let categories = [];          // [{id,name,fields:[{key,label,field_type,unit,is_required}]}]
   let activitiesByCat = {};     // catId -> [{id,name}]
-  let rows = [];                // pending {id?, activity_id, activity_name, category_name, values, notes}
+  let rows = [];                // pending {id?, category_id, activity_id, activity_name, category_name, values, notes}
+  let editingIndex = null;      // index of the row currently being edited, or null
 
   function fieldMap() {
     const m = {};
@@ -92,9 +93,13 @@ const ActivitySection = (function () {
     ul.innerHTML = rows.map((r, i) => {
       const parts = Object.entries(r.values).map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(v)}`).join(' · ');
       const note = r.notes ? ` <span class="text-muted">· ${escapeHtml(r.notes)}</span>` : '';
-      return `<li class="list-group-item d-flex justify-content-between align-items-center py-1 small">
+      const editing = (editingIndex === i) ? ' bg-warning-subtle' : '';
+      return `<li class="list-group-item d-flex justify-content-between align-items-center py-1 small${editing}">
         <span><strong>${escapeHtml(r.activity_name)}</strong> <span class="text-muted">· ${escapeHtml(r.category_name)}</span> ${parts}${note}</span>
-        <button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="ActivitySection.remove(${i})">✕</button>
+        <span class="d-flex gap-2">
+          <button type="button" class="btn btn-sm btn-link p-0" onclick="ActivitySection.edit(${i})">Edit</button>
+          <button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="ActivitySection.remove(${i})">✕</button>
+        </span>
       </li>`;
     }).join('');
   }
@@ -133,21 +138,56 @@ const ActivitySection = (function () {
     const activity = await ensureActivity(catId, name);
     if (!activity) return;
 
-    rows.push({
+    const row = {
+      id: (editingIndex !== null && rows[editingIndex]) ? rows[editingIndex].id : undefined,
+      category_id: cat.id,
       activity_id: activity.id,
       activity_name: activity.name,
       category_name: cat.name,
       values,
       notes: document.getElementById('actNote').value.trim() || null,
-    });
+    };
+    if (editingIndex !== null) {
+      rows[editingIndex] = row;     // update in place, preserving its id
+    } else {
+      rows.push(row);
+    }
+    clearForm();
     renderRows();
-    // reset inputs
+  }
+
+  // Load a row back into the form for editing.
+  function edit(i) {
+    const r = rows[i];
+    if (!r) return;
+    editingIndex = i;
+    const catSel = document.getElementById('actCategory');
+    catSel.value = r.category_id;
+    renderFields(r.category_id);
+    loadActivities(r.category_id);
+    document.getElementById('actActivity').value = r.activity_name;
+    document.getElementById('actNote').value = r.notes || '';
+    document.querySelectorAll('#actFields .act-field').forEach(inp => {
+      inp.value = (r.values && r.values[inp.dataset.key] != null) ? r.values[inp.dataset.key] : '';
+    });
+    document.getElementById('actAddBtn').textContent = 'Save changes';
+    renderRows();  // highlight the row being edited
+  }
+
+  // Clear the input area and exit edit mode.
+  function clearForm() {
+    editingIndex = null;
     document.getElementById('actActivity').value = '';
     document.getElementById('actNote').value = '';
     document.querySelectorAll('#actFields .act-field').forEach(i => i.value = '');
+    document.getElementById('actAddBtn').textContent = '+ Add to session';
   }
 
-  function remove(i) { rows.splice(i, 1); renderRows(); }
+  function remove(i) {
+    rows.splice(i, 1);
+    if (editingIndex !== null) clearForm();  // cancel any in-progress edit (indices shifted)
+    renderRows();
+  }
 
   function collect() {
     return rows.map(r => ({
@@ -158,18 +198,20 @@ const ActivitySection = (function () {
     }));
   }
 
-  function reset() { rows = []; renderRows(); }
+  function reset() { rows = []; clearForm(); renderRows(); }
 
   function prefill(serverRows) {
     // serverRows from /history/sessions/ : {id, activity_id, activity_name, category_id, category_name, values, notes}
     rows = (serverRows || []).map(r => ({
       id: r.id,
+      category_id: r.category_id,
       activity_id: r.activity_id,
       activity_name: r.activity_name,
       category_name: r.category_name,
       values: r.values || {},
       notes: r.notes || null,
     }));
+    clearForm();
     renderRows();
   }
 
@@ -184,6 +226,6 @@ const ActivitySection = (function () {
     document.getElementById('actAddBtn').addEventListener('click', add);
   }
 
-  return { load, init, add, remove, collect, reset, prefill, fieldMap, fmtValue };
+  return { load, init, add, edit, remove, collect, reset, prefill, fieldMap, fmtValue };
 })();
 </script>
