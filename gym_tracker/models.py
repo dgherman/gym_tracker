@@ -8,6 +8,9 @@ from sqlalchemy import (
     ForeignKey,
     Float,
     Boolean,
+    JSON,
+    Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -108,6 +111,12 @@ class Session(Base):
 
     purchase = relationship("Purchase", back_populates="sessions")
     trainer_rel = relationship("Trainer", back_populates="sessions")
+    activities = relationship(
+        "SessionActivity",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="SessionActivity.sort_order",
+    )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -127,3 +136,72 @@ class Package(Base):
 
     def __repr__(self) -> str:
         return f"<Package id={self.id} name={self.name!r} duration={self.duration_minutes} people={self.num_people}>"
+
+
+# ─────────────────────────────────────────────────────────────
+# Activity tracking
+# ─────────────────────────────────────────────────────────────
+class ActivityCategory(Base):
+    __tablename__ = "activity_categories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False, unique=True)
+    slug = Column(String(255), nullable=False, unique=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    fields = relationship(
+        "CategoryField",
+        back_populates="category",
+        cascade="all, delete-orphan",
+        order_by="CategoryField.sort_order",
+    )
+    activities = relationship("Activity", back_populates="category")
+
+
+class CategoryField(Base):
+    __tablename__ = "category_fields"
+    __table_args__ = (UniqueConstraint("category_id", "key", name="uq_category_field_key"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    category_id = Column(Integer, ForeignKey("activity_categories.id"), nullable=False)
+    key = Column(String(64), nullable=False)
+    label = Column(String(255), nullable=False)
+    field_type = Column(String(20), nullable=False)  # integer | decimal | duration | text
+    unit = Column(String(32), nullable=True)
+    is_required = Column(Boolean, nullable=False, default=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    category = relationship("ActivityCategory", back_populates="fields")
+
+
+class Activity(Base):
+    __tablename__ = "activities"
+    __table_args__ = (UniqueConstraint("category_id", "name", name="uq_activity_name_per_category"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    category_id = Column(Integer, ForeignKey("activity_categories.id"), nullable=False)
+    name = Column(String(255), nullable=False, index=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    category = relationship("ActivityCategory", back_populates="activities")
+
+
+class SessionActivity(Base):
+    __tablename__ = "session_activities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("sessions.id"), nullable=False)
+    activity_id = Column(Integer, ForeignKey("activities.id"), nullable=False)
+    values = Column(JSON, nullable=False, default=dict)
+    notes = Column(Text, nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    session = relationship("Session", back_populates="activities")
+    activity = relationship("Activity")
