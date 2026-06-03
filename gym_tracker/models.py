@@ -201,6 +201,8 @@ class SessionActivity(Base):
     values = Column(JSON, nullable=False, default=dict)
     notes = Column(Text, nullable=True)
     sort_order = Column(Integer, nullable=False, default=0)
+    # NULL = shared / whole-session (legacy + single-person); 1 = owner (Person A); 2 = partner (Person B)
+    person_slot = Column(Integer, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     session = relationship("Session", back_populates="activities")
