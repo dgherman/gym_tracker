@@ -71,3 +71,22 @@ def test_session_activity_has_person_slot_column():
     assert hasattr(models.SessionActivity, "person_slot")
     sa = models.SessionActivity(session_id=1, activity_id=1, values={}, person_slot=2)
     assert sa.person_slot == 2
+
+
+from gym_tracker import schemas
+
+
+def test_input_schema_accepts_person_slot():
+    s = schemas.SessionActivityInput(activity_id=1, values={}, person_slot=2)
+    assert s.person_slot == 2
+
+
+def test_input_schema_person_slot_defaults_none():
+    s = schemas.SessionActivityInput(activity_id=1, values={})
+    assert s.person_slot is None
+
+
+def test_read_schema_has_person_fields():
+    fields = schemas.SessionActivityRead.model_fields
+    assert "person_slot" in fields
+    assert "person_name" in fields
