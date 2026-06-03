@@ -187,8 +187,8 @@
                 return `${escapeHtml(label)}: ${escapeHtml(disp)}`;
               }).join(' · ');
               const note = a.notes ? ` <span class="text-muted">· ${escapeHtml(a.notes)}</span>` : '';
-              const catBadge = showCat ? ` <span class="text-muted badge bg-light text-secondary border">${escapeHtml(a.category_name)}</span>` : '';
-              return `<div class="small">• ${escapeHtml(a.activity_name)}${catBadge} <span class="text-muted">${parts}</span>${note}</div>`;
+              const catBadge = showCat ? `<span class="text-muted badge bg-light text-secondary border">${escapeHtml(a.category_name)}</span> ` : '';
+              return `<div class="small">• ${catBadge}${escapeHtml(a.activity_name)} <span class="text-muted">${parts}</span>${note}</div>`;
             }
             if (s.num_people > 1) {
               // Couples session: group by person_name
