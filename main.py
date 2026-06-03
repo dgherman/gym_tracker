@@ -298,14 +298,13 @@ async def api_edit_session(
     new_duration = data["duration_minutes"]
 
     if new_duration != old_duration:
+        if owner_id is None:
+            raise HTTPException(400, "Cannot reallocate pack: session has no pack owner")
+
         # Refund to the ORIGINAL purchase that this session used (not "first pack").
-        original_purchase = db.query(models.Purchase).filter(models.Purchase.id == s.purchase_id).first()
-        if original_purchase:
-            # Verify the purchase belongs to the pack owner (not just the acting user)
-            if original_purchase.logged_by_user_id != owner_id:
-                raise HTTPException(403, "Not allowed to modify packs you don't own")
-            original_purchase.sessions_remaining += 1
-            db.add(original_purchase)
+        if s_purchase:
+            s_purchase.sessions_remaining += 1
+            db.add(s_purchase)
 
         # Deduct from a NEW pack owned by the pack owner, with the new duration
         new_pack = (

@@ -91,8 +91,40 @@ def test_partner_duration_change_reallocates_owner_packs(couples_with_60min_owne
                json=_edit_payload(duration=60), headers={"accept": "application/json"})
     assert r.status_code == 200, r.text
     db = db_factory()
+    # Assert the new 60-min pack was debited
     owner_60 = (db.query(models.Purchase)
                 .filter(models.Purchase.logged_by_user_id == c._ids["owner"],
                         models.Purchase.duration_minutes == 60).first())
     assert owner_60.sessions_remaining == owner_60.total_sessions - 1  # one consumed off OWNER's pack
+    # Assert the original 30-min owner pack was REFUNDED (10 → 11)
+    owner_30 = (db.query(models.Purchase)
+                .filter(models.Purchase.logged_by_user_id == c._ids["owner"],
+                        models.Purchase.duration_minutes == 30).first())
+    assert owner_30.sessions_remaining == 11  # refunded from 10
     db.close()
+
+
+def test_outsider_cannot_delete_session(couples):
+    c = couples
+    _login(c, "out@x.com")
+    r = c.post(f"/history/api/delete/session/{c._ids['session']}",
+               headers={"accept": "application/json"})
+    assert r.status_code == 403
+
+
+def test_null_owner_duration_change_returns_400(client_factory):
+    """A couples session whose purchase has logged_by_user_id=None; changing duration returns 400."""
+    c = client_factory(num_people=2, with_partner=True)
+    # Patch the purchase to have a null owner, simulating a legacy record
+    db = TestSessionLocal()
+    pur = db.query(models.Purchase).filter(models.Purchase.id == c._ids["purchase"]).first()
+    pur.logged_by_user_id = None
+    db.commit()
+    db.close()
+
+    # Log in as partner (who is a participant but not the owner)
+    _login(c, "partner@x.com")
+    r = c.post(f"/history/api/edit/session/{c._ids['session']}",
+               json=_edit_payload(duration=60), headers={"accept": "application/json"})
+    assert r.status_code == 400, r.text
+    assert "no pack owner" in r.json()["detail"]
