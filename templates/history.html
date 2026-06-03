@@ -67,6 +67,9 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script>
+    window.CURRENT_USER_NAME = {{ (current_user.full_name or current_user.email) | tojson if current_user else '"You"' }};
+  </script>
+  <script>
     // Helpers
     function escapeHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
     function pad(n) { return n.toString().padStart(2,'0'); }
@@ -296,6 +299,11 @@
         document.getElementById('sessionTrainer').value  = btn.dataset.trainer;
 
         const sess = sessionsById[btn.dataset.id];
+        ActivitySection.setPeople(sess && sess.num_people > 1 ? {
+          numPeople: sess.num_people,
+          personA: (window.CURRENT_USER_NAME || 'You'),
+          personB: (sess.partner_name || 'Partner'),
+        } : { numPeople: 1 });
         ActivitySection.prefill(sess ? sess.activities : []);
       });
 
