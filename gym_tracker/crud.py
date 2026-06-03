@@ -35,6 +35,24 @@ def _user_session_ids(db: Session, user_id: int, start=None, end=None):
     return q.distinct().subquery()
 
 
+def session_participant_ids(session, purchase) -> set:
+    """User ids allowed to edit/delete a session: creator, purchase owner,
+    and the session/purchase partner. partner_email-only partners have no
+    account and cannot log in, so they need no entry."""
+    ids = {
+        getattr(session, "created_by_user_id", None),
+        getattr(session, "partner_user_id", None),
+        getattr(purchase, "logged_by_user_id", None) if purchase else None,
+        getattr(purchase, "partner_user_id", None) if purchase else None,
+    }
+    ids.discard(None)
+    return ids
+
+
+def user_can_edit_session(session, purchase, user_id) -> bool:
+    return user_id in session_participant_ids(session, purchase)
+
+
 def _resolve_partner(db: Session, partner_email: Optional[str]) -> Optional[int]:
     """Look up a user by email. Returns user ID or None."""
     if not partner_email:
