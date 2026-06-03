@@ -179,7 +179,7 @@
           let actHtml = '';
           if (s.activities && s.activities.length) {
             const fmap = ActivitySection.fieldMap();
-            function renderActivityLine(a) {
+            function renderActivityLine(a, showCat) {
               const parts = Object.entries(a.values || {}).map(([k, v]) => {
                 const f = fmap[a.category_id + ':' + k];
                 const label = f ? f.label : k;
@@ -187,7 +187,8 @@
                 return `${escapeHtml(label)}: ${escapeHtml(disp)}`;
               }).join(' · ');
               const note = a.notes ? ` <span class="text-muted">· ${escapeHtml(a.notes)}</span>` : '';
-              return `<div class="small">• ${escapeHtml(a.activity_name)} <span class="text-muted badge bg-light text-secondary border">${escapeHtml(a.category_name)}</span> <span class="text-muted">${parts}</span>${note}</div>`;
+              const catBadge = showCat ? ` <span class="text-muted badge bg-light text-secondary border">${escapeHtml(a.category_name)}</span>` : '';
+              return `<div class="small">• ${escapeHtml(a.activity_name)}${catBadge} <span class="text-muted">${parts}</span>${note}</div>`;
             }
             if (s.num_people > 1) {
               // Couples session: group by person_name
@@ -201,7 +202,7 @@
               actHtml = '<div class="ms-3 mt-1 w-100">' +
                 personOrder.map(pname =>
                   `<div class="small fw-bold text-dark mt-1">${escapeHtml(pname)}</div>` +
-                  byPerson[pname].map(renderActivityLine).join('')
+                  byPerson[pname].map(a => renderActivityLine(a, true)).join('')
                 ).join('') + '</div>';
             } else {
               // Solo session: flat rendering grouped by category (original behaviour)
@@ -209,7 +210,7 @@
               s.activities.forEach(a => { (byCat[a.category_name] = byCat[a.category_name] || []).push(a); });
               actHtml = '<div class="ms-3 mt-1 w-100">' + Object.entries(byCat).map(([cat, items]) =>
                 `<div class="small text-uppercase text-muted">${escapeHtml(cat)}</div>` +
-                items.map(renderActivityLine).join('')
+                items.map(a => renderActivityLine(a, false)).join('')
               ).join('') + '</div>';
             }
           }
