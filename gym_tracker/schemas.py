@@ -41,6 +41,7 @@ class Session(SessionBase):
     partner_name: str | None = None
     num_people: int = 1
     is_owner: bool = True
+    can_edit: bool = True
     activities: list["SessionActivityRead"] = []
     model_config = {
         "from_attributes": True
@@ -272,6 +273,7 @@ class SessionActivityInput(BaseModel):
     activity_id: int
     values: dict = {}
     notes: str | None = None
+    person_slot: int | None = None  # None=shared, 1=owner, 2=partner
 
 
 class SessionActivityRead(BaseModel):
@@ -282,6 +284,8 @@ class SessionActivityRead(BaseModel):
     category_name: str
     values: dict = {}
     notes: str | None = None
+    person_slot: int | None = None
+    person_name: str | None = None
     sort_order: int
     model_config = {"from_attributes": True}
 

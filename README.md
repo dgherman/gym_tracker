@@ -11,6 +11,14 @@ Simple gym sessions tracker
 
 ## Changelog
 
+### 2026-06-03 – Per-Person Activity Tracking & Couples Edit-Auth
+
+- Added per-person activity recording for couples sessions via `person_slot` field on `session_activities` (1=owner/Person A, 2=partner/Person B, null=Both/Shared for legacy rows).
+- Log/edit UI renders separate add-activity sections for each person in couples sessions; legacy shared rows display read-only.
+- Either participant (owner or partner) can now edit or delete a couples session; previously restricted to the user who logged the session.
+- Pack reallocation on duration change is always scoped to the purchase owner, regardless of which participant edits.
+- Activity value display now shows units consistently in the log/edit modal (previously raw `key: value`); duration fields render as whole minutes (`N min`) instead of an ambiguous `mm:ss`, and the `min` unit is seeded on duration fields so the entry form hints minutes.
+
 ### 2026-06-02 – Activity Tracking
 
 - Added optional structured activity logging to sessions with category-based metric schemas (Strength, Cardio, Mobility, Other).

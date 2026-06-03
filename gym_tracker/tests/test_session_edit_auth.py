@@ -1,0 +1,170 @@
+import os
+import datetime
+
+from gym_tracker import crud, models
+from gym_tracker.tests.db_test_utils import TestSessionLocal
+
+
+class _S:  # lightweight stand-ins (helpers are pure)
+    def __init__(self, created_by, partner=None):
+        self.created_by_user_id = created_by
+        self.partner_user_id = partner
+
+
+class _P:
+    def __init__(self, owner, partner=None):
+        self.logged_by_user_id = owner
+        self.partner_user_id = partner
+
+
+def test_participant_ids_includes_owner_and_partner():
+    ids = crud.session_participant_ids(_S(created_by=1), _P(owner=1, partner=2))
+    assert ids == {1, 2}
+
+
+def test_owner_can_edit():
+    assert crud.user_can_edit_session(_S(1), _P(1, 2), 1) is True
+
+
+def test_partner_can_edit():
+    assert crud.user_can_edit_session(_S(1), _P(1, 2), 2) is True
+
+
+def test_outsider_cannot_edit():
+    assert crud.user_can_edit_session(_S(1), _P(1, 2), 99) is False
+
+
+def test_session_partner_override_counts():
+    assert crud.user_can_edit_session(_S(1, partner=5), _P(1, None), 5) is True
+
+
+# ---------------------------------------------------------------------------
+# Integration tests — edit/delete authorization via /dev/login session cookies
+# ---------------------------------------------------------------------------
+
+# /dev/login (GET) is env-gated by DEV_LOGIN and logs in as the user whose
+# email == DEV_LOGIN_EMAIL (it finds our seeded users by email and sets
+# request.session["user_id"]). It IGNORES any user_id param. So we switch
+# acting-user by setting DEV_LOGIN_EMAIL, then GET /dev/login; the signed
+# session cookie lands in the TestClient cookie jar for later requests.
+# conftest.py sets os.environ["DEV_LOGIN"] = "1" BEFORE importing main.
+def _login(c, email):
+    os.environ["DEV_LOGIN_EMAIL"] = email
+    r = c.get("/dev/login", follow_redirects=False)
+    assert r.status_code in (200, 302, 307), r.text
+
+
+def _edit_payload(session_date="2026-05-01T10:00:00", duration=30, trainer="Alex", activities=None):
+    return {"session_date": session_date, "duration_minutes": duration,
+            "trainer": trainer, "activities": activities or []}
+
+
+def test_partner_can_edit_session(couples):
+    c = couples
+    _login(c, "partner@x.com")
+    r = c.post(f"/history/api/edit/session/{c._ids['session']}",
+               json=_edit_payload(), headers={"accept": "application/json"})
+    assert r.status_code == 200, r.text
+
+
+def test_outsider_cannot_edit_session(couples):
+    c = couples
+    _login(c, "out@x.com")
+    r = c.post(f"/history/api/edit/session/{c._ids['session']}",
+               json=_edit_payload(), headers={"accept": "application/json"})
+    assert r.status_code == 403
+
+
+def test_partner_can_delete_session(couples):
+    c = couples
+    _login(c, "partner@x.com")
+    r = c.post(f"/history/api/delete/session/{c._ids['session']}",
+               headers={"accept": "application/json"})
+    assert r.status_code == 200, r.text
+
+
+def test_partner_duration_change_reallocates_owner_packs(couples_with_60min_owner_pack):
+    # Fixture seeds a 60-min pack owned by OWNER so reallocation can succeed.
+    c, db_factory = couples_with_60min_owner_pack
+    _login(c, "partner@x.com")
+    r = c.post(f"/history/api/edit/session/{c._ids['session']}",
+               json=_edit_payload(duration=60), headers={"accept": "application/json"})
+    assert r.status_code == 200, r.text
+    db = db_factory()
+    # Assert the new 60-min pack was debited
+    owner_60 = (db.query(models.Purchase)
+                .filter(models.Purchase.logged_by_user_id == c._ids["owner"],
+                        models.Purchase.duration_minutes == 60).first())
+    assert owner_60.sessions_remaining == owner_60.total_sessions - 1  # one consumed off OWNER's pack
+    # Assert the original 30-min owner pack was REFUNDED (10 → 11)
+    owner_30 = (db.query(models.Purchase)
+                .filter(models.Purchase.logged_by_user_id == c._ids["owner"],
+                        models.Purchase.duration_minutes == 30).first())
+    assert owner_30.sessions_remaining == 11  # refunded from 10
+    db.close()
+
+
+def test_outsider_cannot_delete_session(couples):
+    c = couples
+    _login(c, "out@x.com")
+    r = c.post(f"/history/api/delete/session/{c._ids['session']}",
+               headers={"accept": "application/json"})
+    assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Fix 1 — can_edit field in /history/sessions/ JSON
+# ---------------------------------------------------------------------------
+
+def test_history_sessions_can_edit_owner(couples):
+    """Session owner sees can_edit=True in the history sessions JSON."""
+    c = couples
+    _login(c, "owner@x.com")
+    r = c.get("/history/sessions/")
+    assert r.status_code == 200, r.text
+    sessions = r.json()
+    assert sessions, "Expected at least one session"
+    sess = next((s for s in sessions if s["id"] == c._ids["session"]), None)
+    assert sess is not None, "Session not found for owner"
+    assert sess["can_edit"] is True
+
+
+def test_history_sessions_can_edit_partner(couples):
+    """Session partner sees can_edit=True in the history sessions JSON."""
+    c = couples
+    _login(c, "partner@x.com")
+    r = c.get("/history/sessions/")
+    assert r.status_code == 200, r.text
+    sessions = r.json()
+    assert sessions, "Expected at least one session"
+    sess = sessions[0]
+    assert sess["can_edit"] is True
+
+
+def test_history_sessions_can_edit_solo_owner(client_factory):
+    """Solo (1-person) session owner sees can_edit=True."""
+    c = client_factory(num_people=1, with_partner=False)
+    _login(c, "owner@x.com")
+    r = c.get("/history/sessions/")
+    assert r.status_code == 200, r.text
+    sessions = r.json()
+    assert sessions, "Expected at least one session"
+    assert sessions[0]["can_edit"] is True
+
+
+def test_null_owner_duration_change_returns_400(client_factory):
+    """A couples session whose purchase has logged_by_user_id=None; changing duration returns 400."""
+    c = client_factory(num_people=2, with_partner=True)
+    # Patch the purchase to have a null owner, simulating a legacy record
+    db = TestSessionLocal()
+    pur = db.query(models.Purchase).filter(models.Purchase.id == c._ids["purchase"]).first()
+    pur.logged_by_user_id = None
+    db.commit()
+    db.close()
+
+    # Log in as partner (who is a participant but not the owner)
+    _login(c, "partner@x.com")
+    r = c.post(f"/history/api/edit/session/{c._ids['session']}",
+               json=_edit_payload(duration=60), headers={"accept": "application/json"})
+    assert r.status_code == 400, r.text
+    assert "no pack owner" in r.json()["detail"]

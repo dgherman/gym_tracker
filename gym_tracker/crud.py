@@ -35,6 +35,24 @@ def _user_session_ids(db: Session, user_id: int, start=None, end=None):
     return q.distinct().subquery()
 
 
+def session_participant_ids(session, purchase) -> set:
+    """User ids allowed to edit/delete a session: creator, purchase owner,
+    and the session/purchase partner. partner_email-only partners have no
+    account and cannot log in, so they need no entry."""
+    ids = {
+        getattr(session, "created_by_user_id", None),
+        getattr(session, "partner_user_id", None),
+        getattr(purchase, "logged_by_user_id", None) if purchase else None,
+        getattr(purchase, "partner_user_id", None) if purchase else None,
+    }
+    ids.discard(None)
+    return ids
+
+
+def user_can_edit_session(session, purchase, user_id) -> bool:
+    return user_id in session_participant_ids(session, purchase)
+
+
 def _resolve_partner(db: Session, partner_email: Optional[str]) -> Optional[int]:
     """Look up a user by email. Returns user ID or None."""
     if not partner_email:
@@ -66,9 +84,12 @@ def _annotate_purchases(db, purchases, user_id: int):
 
 
 def _annotate_session(sess, purchase, user_id: int):
-    """Add partner_email, partner_name, num_people, is_owner to a session.
-    partner_name always shows the OTHER person, not yourself."""
+    """Add partner_email, partner_name, num_people, is_owner, can_edit to a session.
+    partner_name always shows the OTHER person, not yourself.
+    is_owner is creator-only (used for Shared badge and cost display).
+    can_edit is true for any participant (creator, purchase owner, or either partner)."""
     sess.is_owner = (sess.created_by_user_id == user_id)
+    sess.can_edit = user_id in session_participant_ids(sess, purchase)
     sess.num_people = purchase.num_people if purchase else 1
 
     if not purchase or purchase.num_people <= 1:
@@ -96,15 +117,41 @@ def _annotate_session(sess, purchase, user_id: int):
             sess.partner_name = purchase.logged_by_user.full_name or purchase.logged_by_user.email
             sess.partner_email = purchase.logged_by_user.email
 
+def _person_name_for_slot(db, purchase, sess, slot):
+    """Absolute person label for an activity row's slot.
+    1=owner, 2=partner, None=shared. Returns a display string.
+
+    Partner-name priority: session.partner_user_id -> purchase.partner_user_id
+    -> purchase.partner_email. Mirrors _resolve_person_slot in activities.py; update both
+    together when the priority chain changes."""
+    if slot is None:
+        return "Both / Shared"
+    if slot == 1:
+        owner = purchase.logged_by_user if purchase else None
+        if owner:
+            return owner.full_name or owner.email
+        return "Person A"
+    # slot == 2 (partner): session override -> purchase partner user -> partner_email
+    if sess.partner_user_id and getattr(sess, "partner_user", None):
+        return sess.partner_user.full_name or sess.partner_user.email
+    if purchase and purchase.partner_user_id and getattr(purchase, "partner_user", None):
+        return purchase.partner_user.full_name or purchase.partner_user.email
+    if purchase and purchase.partner_email:
+        return purchase.partner_email
+    return "Person B"
+
+
 def _annotate_session_activities(db, sess):
-    """Attach activity_name, category_id, category_name onto each
-    SessionActivity so the SessionActivityRead schema can serialize it."""
+    """Attach activity_name, category_id, category_name, person_slot and
+    person_name onto each SessionActivity for SessionActivityRead."""
+    purchase = db.get(models.Purchase, sess.purchase_id)
     for sa in sess.activities:
         activity = sa.activity or db.get(models.Activity, sa.activity_id)
         sa.activity_name = activity.name if activity else "(unknown)"
         category = db.get(models.ActivityCategory, activity.category_id) if activity else None
         sa.category_id = category.id if category else 0
         sa.category_name = category.name if category else "(unknown)"
+        sa.person_name = _person_name_for_slot(db, purchase, sess, sa.person_slot)
 
 
 # --------------------

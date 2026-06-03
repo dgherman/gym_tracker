@@ -67,6 +67,9 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script>
+    window.CURRENT_USER_NAME = {{ ((current_user.full_name or current_user.email) if current_user else 'You') | tojson }};
+  </script>
+  <script>
     // Helpers
     function escapeHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
     function pad(n) { return n.toString().padStart(2,'0'); }
@@ -165,39 +168,58 @@
 
           let partnerBadge = '';
           if (s.num_people >= 2 && s.partner_name) {
-            partnerBadge = ` <span class="badge bg-info">with ${s.partner_name}</span>`;
+            partnerBadge = ` <span class="badge bg-info">with ${escapeHtml(s.partner_name)}</span>`;
           }
           if (!s.is_owner) {
             partnerBadge += ' <span class="badge bg-secondary">Shared</span>';
           }
 
-          const canEdit = s.is_owner !== false;
+          const canEdit = s.can_edit !== false;
 
           let actHtml = '';
           if (s.activities && s.activities.length) {
             const fmap = ActivitySection.fieldMap();
-            const byCat = {};
-            s.activities.forEach(a => { (byCat[a.category_name] = byCat[a.category_name] || []).push(a); });
-            actHtml = '<div class="ms-3 mt-1 w-100">' + Object.entries(byCat).map(([cat, items]) => {
-              const lines = items.map(a => {
-                const parts = Object.entries(a.values || {}).map(([k, v]) => {
-                  const f = fmap[a.category_id + ':' + k];
-                  const label = f ? f.label : k;
-                  const disp = f ? ActivitySection.fmtValue(a.category_name, f, v) : v;
-                  return `${escapeHtml(label)}: ${escapeHtml(disp)}`;
-                }).join(' · ');
-                const note = a.notes ? ` <span class="text-muted">· ${escapeHtml(a.notes)}</span>` : '';
-                return `<div class="small">• ${escapeHtml(a.activity_name)} <span class="text-muted">${parts}</span>${note}</div>`;
-              }).join('');
-              return `<div class="small text-uppercase text-muted">${escapeHtml(cat)}</div>${lines}`;
-            }).join('') + '</div>';
+            function renderActivityLine(a, showCat) {
+              const parts = Object.entries(a.values || {}).map(([k, v]) => {
+                const f = fmap[a.category_id + ':' + k];
+                const label = f ? f.label : k;
+                const disp = f ? ActivitySection.fmtValue(a.category_name, f, v) : v;
+                return `${escapeHtml(label)}: ${escapeHtml(disp)}`;
+              }).join(' · ');
+              const note = a.notes ? ` <span class="text-muted">· ${escapeHtml(a.notes)}</span>` : '';
+              const catBadge = showCat ? `<span class="text-muted badge bg-light text-secondary border">${escapeHtml(a.category_name)}</span> ` : '';
+              return `<div class="small">• ${catBadge}${escapeHtml(a.activity_name)} <span class="text-muted">${parts}</span>${note}</div>`;
+            }
+            if (s.num_people > 1) {
+              // Couples session: group by person_name
+              const byPerson = {};
+              const personOrder = [];
+              s.activities.forEach(a => {
+                const pname = a.person_name || 'Both / Shared';
+                if (!byPerson[pname]) { byPerson[pname] = []; personOrder.push(pname); }
+                byPerson[pname].push(a);
+              });
+              actHtml = '<div class="ms-3 mt-1 w-100">' +
+                personOrder.map(pname =>
+                  `<div class="small fw-bold text-dark mt-1">${escapeHtml(pname)}</div>` +
+                  byPerson[pname].map(a => renderActivityLine(a, true)).join('')
+                ).join('') + '</div>';
+            } else {
+              // Solo session: flat rendering grouped by category (original behaviour)
+              const byCat = {};
+              s.activities.forEach(a => { (byCat[a.category_name] = byCat[a.category_name] || []).push(a); });
+              actHtml = '<div class="ms-3 mt-1 w-100">' + Object.entries(byCat).map(([cat, items]) =>
+                `<div class="small text-uppercase text-muted">${escapeHtml(cat)}</div>` +
+                items.map(a => renderActivityLine(a, false)).join('')
+              ).join('') + '</div>';
+            }
           }
 
           html += `
             <li class="list-group-item small" id="session-card-${s.id}">
               <div class="d-flex justify-content-between align-items-center">
                 <span class="flex-grow-1 text-wrap">
-                  ${label} — ${s.duration_minutes} min with ${s.trainer}${partnerBadge}
+                  ${label} — ${s.duration_minutes} min with ${escapeHtml(s.trainer)}${partnerBadge}
                 </span>
                 <span class="d-flex gap-1">
                   ${canEdit ? `
@@ -206,7 +228,7 @@
                           data-id="${s.id}"
                           data-date="${dtLocal}"
                           data-duration="${s.duration_minutes}"
-                          data-trainer="${s.trainer}">
+                          data-trainer="${escapeHtml(s.trainer)}">
                     Edit
                   </button>
                   <button class="btn btn-sm btn-outline-danger action-btn py-0 px-2"
@@ -231,7 +253,7 @@
 
           let partnerBadge = '';
           if (p.num_people >= 2 && p.partner_name) {
-            partnerBadge = ` <span class="badge bg-info">Partner: ${p.partner_name}</span>`;
+            partnerBadge = ` <span class="badge bg-info">Partner: ${escapeHtml(p.partner_name)}</span>`;
           }
 
           let costLabel = '';
@@ -296,6 +318,11 @@
         document.getElementById('sessionTrainer').value  = btn.dataset.trainer;
 
         const sess = sessionsById[btn.dataset.id];
+        ActivitySection.setPeople(sess && sess.num_people > 1 ? {
+          numPeople: sess.num_people,
+          personA: (window.CURRENT_USER_NAME || 'You'),
+          personB: (sess.partner_name || 'Partner'),
+        } : { numPeople: 1 });
         ActivitySection.prefill(sess ? sess.activities : []);
       });
 

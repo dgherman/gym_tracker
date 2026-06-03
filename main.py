@@ -288,30 +288,31 @@ async def api_edit_session(
     if not s:
         raise HTTPException(404, "Session not found")
 
-    # Ownership check
-    if s.created_by_user_id != user_id:
+    s_purchase = db.query(models.Purchase).filter(models.Purchase.id == s.purchase_id).first()
+    if not crud.user_can_edit_session(s, s_purchase, user_id):
         raise HTTPException(403, "Not allowed")
+
+    owner_id = s_purchase.logged_by_user_id if s_purchase else user_id
 
     old_duration = s.duration_minutes
     new_duration = data["duration_minutes"]
 
     if new_duration != old_duration:
-        # Refund to the ORIGINAL purchase that this session used (not “first pack”).
-        original_purchase = db.query(models.Purchase).filter(models.Purchase.id == s.purchase_id).first()
-        if original_purchase:
-            # (Optional) verify the purchase also belongs to this user
-            if original_purchase.logged_by_user_id != user_id:
-                raise HTTPException(403, "Not allowed to modify packs you don't own")
-            original_purchase.sessions_remaining += 1
-            db.add(original_purchase)
+        if owner_id is None:
+            raise HTTPException(400, "Cannot reallocate pack: session has no pack owner")
 
-        # Deduct from a NEW pack owned by the same user, with the new duration
+        # Refund to the ORIGINAL purchase that this session used (not "first pack").
+        if s_purchase:
+            s_purchase.sessions_remaining += 1
+            db.add(s_purchase)
+
+        # Deduct from a NEW pack owned by the pack owner, with the new duration
         new_pack = (
             db.query(models.Purchase)
             .filter(
                 models.Purchase.duration_minutes == new_duration,
                 models.Purchase.sessions_remaining > 0,
-                models.Purchase.logged_by_user_id == user_id,   # scope to owner
+                models.Purchase.logged_by_user_id == owner_id,   # scope to pack owner
             )
             .order_by(models.Purchase.purchase_date)
             .first()
@@ -379,13 +380,12 @@ def api_delete_session(
     if not s:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Ownership check
-    if s.created_by_user_id != user_id:
+    purchase = db.query(models.Purchase).filter(models.Purchase.id == s.purchase_id).first()
+    if not crud.user_can_edit_session(s, purchase, user_id):
         raise HTTPException(403, "Not allowed")
 
-    # Refund the session to the purchase that funded it (if it belongs to the same user)
-    purchase = db.query(models.Purchase).filter(models.Purchase.id == s.purchase_id).first()
-    if purchase and purchase.logged_by_user_id == user_id:
+    # Refund the session to the purchase that funded it (regardless of who deletes).
+    if purchase:
         purchase.sessions_remaining += 1
         db.add(purchase)
 

@@ -215,11 +215,39 @@ def soft_delete_field(db: Session, field_id: int):
 # Session-activity reconciliation
 # --------------------
 
+def _resolve_person_slot(session, purchase, raw_slot):
+    """Normalize/validate a desired person_slot for one activity row.
+    Returns the slot to store (None/1/2). Raises ValueError on bad input.
+
+    Partner-existence priority: session.partner_user_id -> purchase.partner_user_id
+    -> purchase.partner_email. Mirrors _person_name_for_slot in crud.py; update both
+    together when the priority chain changes."""
+    if raw_slot is None:
+        return None
+    # A session with no resolvable purchase is treated as solo; any explicit slot is ignored.
+    if purchase is None:
+        return None
+    if raw_slot not in (1, 2):
+        raise ValueError("person_slot must be null, 1, or 2")
+    if purchase.num_people <= 1:
+        return None  # single-person sessions are never per-person
+    if raw_slot == 2:
+        has_partner = bool(
+            session.partner_user_id
+            or purchase.partner_user_id
+            or purchase.partner_email
+        )
+        if not has_partner:
+            raise ValueError("Cannot assign activity to Person B: session has no partner")
+    return raw_slot
+
+
 def reconcile_session_activities(db: Session, session: models.Session, items, *, created_by_user_id=None):
     """Reconcile a session's activities to the desired set `items`
     (list of schemas.SessionActivityInput). Upsert by id, delete omitted.
-    Validates each row's values; raises ValueError on any problem.
-    Does NOT commit — caller commits so the whole session edit is atomic."""
+    Validates each row's values and person_slot; raises ValueError on any
+    problem. Does NOT commit — caller commits so the edit is atomic."""
+    purchase = db.get(models.Purchase, session.purchase_id)
     existing = {sa.id: sa for sa in session.activities}
     seen_ids = set()
 
@@ -228,6 +256,7 @@ def reconcile_session_activities(db: Session, session: models.Session, items, *,
         if not activity or not activity.is_active:
             raise ValueError("Selected activity is not available (inactive or unknown)")
         cleaned = validate_activity_values(db, activity, item.values)
+        slot = _resolve_person_slot(session, purchase, item.person_slot)
 
         if item.id is not None:
             sa = existing.get(item.id)
@@ -237,6 +266,7 @@ def reconcile_session_activities(db: Session, session: models.Session, items, *,
             sa.values = cleaned
             sa.notes = item.notes
             sa.sort_order = idx
+            sa.person_slot = slot
             seen_ids.add(item.id)
         else:
             sa = models.SessionActivity(
@@ -245,6 +275,7 @@ def reconcile_session_activities(db: Session, session: models.Session, items, *,
                 values=cleaned,
                 notes=item.notes,
                 sort_order=idx,
+                person_slot=slot,
                 created_at=datetime.now(timezone.utc),
             )
             db.add(sa)
