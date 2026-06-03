@@ -96,15 +96,37 @@ def _annotate_session(sess, purchase, user_id: int):
             sess.partner_name = purchase.logged_by_user.full_name or purchase.logged_by_user.email
             sess.partner_email = purchase.logged_by_user.email
 
+def _person_name_for_slot(db, purchase, sess, slot):
+    """Absolute person label for an activity row's slot.
+    1=owner, 2=partner, None=shared. Returns a display string."""
+    if slot is None:
+        return "Both / Shared"
+    if slot == 1:
+        owner = purchase.logged_by_user if purchase else None
+        if owner:
+            return owner.full_name or owner.email
+        return "Person A"
+    # slot == 2 (partner): session override -> purchase partner user -> partner_email
+    if sess.partner_user_id and getattr(sess, "partner_user", None):
+        return sess.partner_user.full_name or sess.partner_user.email
+    if purchase and purchase.partner_user_id and getattr(purchase, "partner_user", None):
+        return purchase.partner_user.full_name or purchase.partner_user.email
+    if purchase and purchase.partner_email:
+        return purchase.partner_email
+    return "Person B"
+
+
 def _annotate_session_activities(db, sess):
-    """Attach activity_name, category_id, category_name onto each
-    SessionActivity so the SessionActivityRead schema can serialize it."""
+    """Attach activity_name, category_id, category_name, person_slot and
+    person_name onto each SessionActivity for SessionActivityRead."""
+    purchase = db.get(models.Purchase, sess.purchase_id)
     for sa in sess.activities:
         activity = sa.activity or db.get(models.Activity, sa.activity_id)
         sa.activity_name = activity.name if activity else "(unknown)"
         category = db.get(models.ActivityCategory, activity.category_id) if activity else None
         sa.category_id = category.id if category else 0
         sa.category_name = category.name if category else "(unknown)"
+        sa.person_name = _person_name_for_slot(db, purchase, sess, sa.person_slot)
 
 
 # --------------------

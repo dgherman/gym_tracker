@@ -138,3 +138,25 @@ def test_reconcile_rejects_bad_slot(couples):
     with pytest.raises(ValueError):
         activities_mod.reconcile_session_activities(db, sess, [_input(ids, 3)])
     db.close()
+
+
+from gym_tracker import crud
+
+
+def test_annotate_resolves_person_names(couples):
+    db = TestSessionLocal()
+    ids = couples._ids
+    sess = db.get(models.Session, ids["session"])
+    activities_mod.reconcile_session_activities(
+        db, sess,
+        [_input(ids, 1), _input(ids, 2),
+         schemas.SessionActivityInput(activity_id=ids["act"], values={"reps": 1}, person_slot=None)],
+    )
+    db.commit()
+    sess = db.get(models.Session, ids["session"])
+    crud._annotate_session_activities(db, sess)
+    by_slot = {sa.person_slot: sa.person_name for sa in sess.activities}
+    assert by_slot[1] == "owner@x.com"        # owner has no full_name -> email
+    assert by_slot[2] == "partner@x.com"
+    assert by_slot[None] == "Both / Shared"
+    db.close()
