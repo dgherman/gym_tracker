@@ -6,7 +6,7 @@
   </button>
   <div class="collapse" id="actSectionBody">
     <div class="p-2">
-      <ul class="list-group mb-2" id="actList"></ul>
+      <div id="actList"></div>
 
       <div class="border-top pt-2">
         <div class="row g-2">
@@ -24,8 +24,9 @@
           <div class="col-12">
             <input id="actNote" class="form-control form-control-sm" placeholder="Note (optional)">
           </div>
-          <div class="col-12">
+          <div class="col-12" id="actAddBtns">
             <button type="button" id="actAddBtn" class="btn btn-sm btn-outline-success">+ Add to session</button>
+            <button type="button" id="actAddBtnB" class="btn btn-sm btn-outline-primary d-none">+ Add to Person B</button>
           </div>
         </div>
       </div>
@@ -38,8 +39,15 @@ function escapeHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'
 const ActivitySection = (function () {
   let categories = [];          // [{id,name,fields:[{key,label,field_type,unit,is_required}]}]
   let activitiesByCat = {};     // catId -> [{id,name}]
-  let rows = [];                // pending {id?, category_id, activity_id, activity_name, category_name, values, notes}
+  let rows = [];                // pending {id?, category_id, activity_id, activity_name, category_name, values, notes, person_slot}
   let editingIndex = null;      // index of the row currently being edited, or null
+  let people = { numPeople: 1, personA: 'Person A', personB: 'Person B' };
+
+  function setPeople(p) {
+    people = Object.assign({ numPeople: 1, personA: 'Person A', personB: 'Person B' }, p || {});
+    renderAddButtons();
+    renderRows();
+  }
 
   function fieldMap() {
     const m = {};
@@ -87,21 +95,49 @@ const ActivitySection = (function () {
       </div>`).join('') + '</div>';
   }
 
+  function renderAddButtons() {
+    const a = document.getElementById('actAddBtn');
+    const b = document.getElementById('actAddBtnB');
+    if (!a) return;
+    if (people.numPeople > 1) {
+      a.textContent = (editingIndex !== null ? 'Save for ' : '+ Add to ') + escapeHtml(people.personA);
+      b.textContent = (editingIndex !== null ? 'Save for ' : '+ Add to ') + escapeHtml(people.personB);
+      b.classList.remove('d-none');
+    } else {
+      a.textContent = (editingIndex !== null ? 'Save changes' : '+ Add to session');
+      b.classList.add('d-none');
+    }
+  }
+
+  function rowHtml(r, i) {
+    const parts = Object.entries(r.values).map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(v)}`).join(' · ');
+    const note = r.notes ? ` <span class="text-muted">· ${escapeHtml(r.notes)}</span>` : '';
+    const editing = (editingIndex === i) ? ' bg-warning-subtle' : '';
+    return `<li class="list-group-item d-flex justify-content-between align-items-center py-1 small${editing}">
+      <span><strong>${escapeHtml(r.activity_name)}</strong> <span class="text-muted">· ${escapeHtml(r.category_name)}</span> ${parts}${note}</span>
+      <span class="d-flex gap-2">
+        <button type="button" class="btn btn-sm btn-link p-0" onclick="ActivitySection.edit(${i})">Edit</button>
+        <button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="ActivitySection.remove(${i})">✕</button>
+      </span></li>`;
+  }
+
+  function group(label, indices) {
+    if (!indices.length) return '';
+    return `<div class="fw-bold small mt-2">${escapeHtml(label)}</div>` +
+      `<ul class="list-group mb-1">${indices.map(i => rowHtml(rows[i], i)).join('')}</ul>`;
+  }
+
   function renderRows() {
     const ul = document.getElementById('actList');
-    if (!rows.length) { ul.innerHTML = ''; return; }
-    ul.innerHTML = rows.map((r, i) => {
-      const parts = Object.entries(r.values).map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(v)}`).join(' · ');
-      const note = r.notes ? ` <span class="text-muted">· ${escapeHtml(r.notes)}</span>` : '';
-      const editing = (editingIndex === i) ? ' bg-warning-subtle' : '';
-      return `<li class="list-group-item d-flex justify-content-between align-items-center py-1 small${editing}">
-        <span><strong>${escapeHtml(r.activity_name)}</strong> <span class="text-muted">· ${escapeHtml(r.category_name)}</span> ${parts}${note}</span>
-        <span class="d-flex gap-2">
-          <button type="button" class="btn btn-sm btn-link p-0" onclick="ActivitySection.edit(${i})">Edit</button>
-          <button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="ActivitySection.remove(${i})">✕</button>
-        </span>
-      </li>`;
-    }).join('');
+    if (people.numPeople <= 1) {
+      ul.innerHTML = rows.length ? `<ul class="list-group">${rows.map((r, i) => rowHtml(r, i)).join('')}</ul>` : '';
+      return;
+    }
+    const idx = (s) => rows.map((r, i) => [r, i]).filter(([r]) => (r.person_slot ?? null) === s).map(([, i]) => i);
+    ul.innerHTML =
+      group(people.personA, idx(1)) +
+      group(people.personB, idx(2)) +
+      group('Both / Shared', idx(null));
   }
 
   async function ensureActivity(catId, name) {
@@ -118,7 +154,7 @@ const ActivitySection = (function () {
     return created;
   }
 
-  async function add() {
+  async function add(slot) {
     const catSel = document.getElementById('actCategory');
     const catId = catSel.value;
     const name = document.getElementById('actActivity').value.trim();
@@ -146,6 +182,7 @@ const ActivitySection = (function () {
       category_name: cat.name,
       values,
       notes: document.getElementById('actNote').value.trim() || null,
+      person_slot: people.numPeople > 1 ? (slot || 1) : null,
     };
     if (editingIndex !== null) {
       rows[editingIndex] = row;     // update in place, preserving its id
@@ -170,7 +207,7 @@ const ActivitySection = (function () {
     document.querySelectorAll('#actFields .act-field').forEach(inp => {
       inp.value = (r.values && r.values[inp.dataset.key] != null) ? r.values[inp.dataset.key] : '';
     });
-    document.getElementById('actAddBtn').textContent = 'Save changes';
+    renderAddButtons();  // update button labels to "Save for ..." mode
     renderRows();  // highlight the row being edited
   }
 
@@ -180,7 +217,7 @@ const ActivitySection = (function () {
     document.getElementById('actActivity').value = '';
     document.getElementById('actNote').value = '';
     document.querySelectorAll('#actFields .act-field').forEach(i => i.value = '');
-    document.getElementById('actAddBtn').textContent = '+ Add to session';
+    renderAddButtons();  // reset button labels back to "+ Add to ..."
   }
 
   function remove(i) {
@@ -195,13 +232,14 @@ const ActivitySection = (function () {
       activity_id: r.activity_id,
       values: r.values,
       notes: r.notes,
+      person_slot: r.person_slot ?? null,
     }));
   }
 
   function reset() { rows = []; clearForm(); renderRows(); }
 
   function prefill(serverRows) {
-    // serverRows from /history/sessions/ : {id, activity_id, activity_name, category_id, category_name, values, notes}
+    // serverRows from /history/sessions/ : {id, activity_id, activity_name, category_id, category_name, values, notes, person_slot}
     rows = (serverRows || []).map(r => ({
       id: r.id,
       category_id: r.category_id,
@@ -210,6 +248,7 @@ const ActivitySection = (function () {
       category_name: r.category_name,
       values: r.values || {},
       notes: r.notes || null,
+      person_slot: r.person_slot ?? null,
     }));
     clearForm();
     renderRows();
@@ -223,9 +262,11 @@ const ActivitySection = (function () {
       renderFields(id);
       if (id) await loadActivities(id);
     });
-    document.getElementById('actAddBtn').addEventListener('click', add);
+    document.getElementById('actAddBtn').addEventListener('click', () => add(1));
+    const bBtn = document.getElementById('actAddBtnB');
+    if (bBtn) bBtn.addEventListener('click', () => add(2));
   }
 
-  return { load, init, add, edit, remove, collect, reset, prefill, fieldMap, fmtValue };
+  return { load, init, add, edit, remove, collect, reset, prefill, setPeople, fieldMap, fmtValue };
 })();
 </script>
