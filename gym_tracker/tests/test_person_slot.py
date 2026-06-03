@@ -90,3 +90,51 @@ def test_read_schema_has_person_fields():
     fields = schemas.SessionActivityRead.model_fields
     assert "person_slot" in fields
     assert "person_name" in fields
+
+
+from gym_tracker import activities as activities_mod
+
+
+def _input(ids, slot):
+    return schemas.SessionActivityInput(activity_id=ids["act"], values={"reps": 5}, person_slot=slot)
+
+
+def test_reconcile_persists_person_slot(couples):
+    db = TestSessionLocal()
+    ids = couples._ids
+    sess = db.get(models.Session, ids["session"])
+    activities_mod.reconcile_session_activities(db, sess, [_input(ids, 1), _input(ids, 2)])
+    db.commit()
+    slots = sorted(sa.person_slot for sa in db.get(models.Session, ids["session"]).activities)
+    assert slots == [1, 2]
+    db.close()
+
+
+def test_reconcile_slot2_without_partner_rejected(client_factory):
+    c = client_factory(num_people=2, with_partner=False)  # no partner_user_id, no partner_email
+    db = TestSessionLocal()
+    ids = c._ids
+    sess = db.get(models.Session, ids["session"])
+    with pytest.raises(ValueError):
+        activities_mod.reconcile_session_activities(db, sess, [_input(ids, 2)])
+    db.close()
+
+
+def test_reconcile_single_person_forces_none(client_factory):
+    c = client_factory(num_people=1, with_partner=False)
+    db = TestSessionLocal()
+    ids = c._ids
+    sess = db.get(models.Session, ids["session"])
+    activities_mod.reconcile_session_activities(db, sess, [_input(ids, 1)])
+    db.commit()
+    assert db.get(models.Session, ids["session"]).activities[0].person_slot is None
+    db.close()
+
+
+def test_reconcile_rejects_bad_slot(couples):
+    db = TestSessionLocal()
+    ids = couples._ids
+    sess = db.get(models.Session, ids["session"])
+    with pytest.raises(ValueError):
+        activities_mod.reconcile_session_activities(db, sess, [_input(ids, 3)])
+    db.close()
