@@ -112,6 +112,46 @@ def test_outsider_cannot_delete_session(couples):
     assert r.status_code == 403
 
 
+# ---------------------------------------------------------------------------
+# Fix 1 — can_edit field in /history/sessions/ JSON
+# ---------------------------------------------------------------------------
+
+def test_history_sessions_can_edit_owner(couples):
+    """Session owner sees can_edit=True in the history sessions JSON."""
+    c = couples
+    _login(c, "owner@x.com")
+    r = c.get("/history/sessions/")
+    assert r.status_code == 200, r.text
+    sessions = r.json()
+    assert sessions, "Expected at least one session"
+    sess = next((s for s in sessions if s["id"] == c._ids["session"]), None)
+    assert sess is not None, "Session not found for owner"
+    assert sess["can_edit"] is True
+
+
+def test_history_sessions_can_edit_partner(couples):
+    """Session partner sees can_edit=True in the history sessions JSON."""
+    c = couples
+    _login(c, "partner@x.com")
+    r = c.get("/history/sessions/")
+    assert r.status_code == 200, r.text
+    sessions = r.json()
+    assert sessions, "Expected at least one session"
+    sess = sessions[0]
+    assert sess["can_edit"] is True
+
+
+def test_history_sessions_can_edit_solo_owner(client_factory):
+    """Solo (1-person) session owner sees can_edit=True."""
+    c = client_factory(num_people=1, with_partner=False)
+    _login(c, "owner@x.com")
+    r = c.get("/history/sessions/")
+    assert r.status_code == 200, r.text
+    sessions = r.json()
+    assert sessions, "Expected at least one session"
+    assert sessions[0]["can_edit"] is True
+
+
 def test_null_owner_duration_change_returns_400(client_factory):
     """A couples session whose purchase has logged_by_user_id=None; changing duration returns 400."""
     c = client_factory(num_people=2, with_partner=True)

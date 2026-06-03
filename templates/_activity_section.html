@@ -174,6 +174,10 @@ const ActivitySection = (function () {
     const activity = await ensureActivity(catId, name);
     if (!activity) return;
 
+    let resolvedSlot = slot;
+    if (editingIndex !== null && rows[editingIndex] && slot == null) {
+      resolvedSlot = rows[editingIndex].person_slot;
+    }
     const row = {
       id: (editingIndex !== null && rows[editingIndex]) ? rows[editingIndex].id : undefined,
       category_id: cat.id,
@@ -182,7 +186,7 @@ const ActivitySection = (function () {
       category_name: cat.name,
       values,
       notes: document.getElementById('actNote').value.trim() || null,
-      person_slot: people.numPeople > 1 ? (slot != null ? slot : 1) : null,
+      person_slot: people.numPeople > 1 ? (resolvedSlot != null ? resolvedSlot : 1) : null,
     };
     if (editingIndex !== null) {
       rows[editingIndex] = row;     // update in place, preserving its id

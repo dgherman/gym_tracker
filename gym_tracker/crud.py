@@ -84,9 +84,12 @@ def _annotate_purchases(db, purchases, user_id: int):
 
 
 def _annotate_session(sess, purchase, user_id: int):
-    """Add partner_email, partner_name, num_people, is_owner to a session.
-    partner_name always shows the OTHER person, not yourself."""
+    """Add partner_email, partner_name, num_people, is_owner, can_edit to a session.
+    partner_name always shows the OTHER person, not yourself.
+    is_owner is creator-only (used for Shared badge and cost display).
+    can_edit is true for any participant (creator, purchase owner, or either partner)."""
     sess.is_owner = (sess.created_by_user_id == user_id)
+    sess.can_edit = user_id in session_participant_ids(sess, purchase)
     sess.num_people = purchase.num_people if purchase else 1
 
     if not purchase or purchase.num_people <= 1:

@@ -41,6 +41,7 @@ class Session(SessionBase):
     partner_name: str | None = None
     num_people: int = 1
     is_owner: bool = True
+    can_edit: bool = True
     activities: list["SessionActivityRead"] = []
     model_config = {
         "from_attributes": True
