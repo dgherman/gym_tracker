@@ -98,7 +98,11 @@ def _annotate_session(sess, purchase, user_id: int):
 
 def _person_name_for_slot(db, purchase, sess, slot):
     """Absolute person label for an activity row's slot.
-    1=owner, 2=partner, None=shared. Returns a display string."""
+    1=owner, 2=partner, None=shared. Returns a display string.
+
+    Partner-name priority: session.partner_user_id -> purchase.partner_user_id
+    -> purchase.partner_email. Mirrors _resolve_person_slot in activities.py; update both
+    together when the priority chain changes."""
     if slot is None:
         return "Both / Shared"
     if slot == 1:

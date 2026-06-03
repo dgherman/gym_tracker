@@ -23,8 +23,6 @@ def couples(client_factory):
 
 @pytest.fixture
 def client_factory():
-    created = {}
-
     def _make(num_people=2, with_partner=True):
         Base.metadata.create_all(bind=test_engine)
         db = TestSessionLocal()
@@ -59,7 +57,6 @@ def client_factory():
         main.app.dependency_overrides[main.get_db] = override_get_db
         c = TestClient(main.app)
         c._ids = ids
-        created["c"] = c
         return c
 
     yield _make
@@ -117,6 +114,29 @@ def test_reconcile_slot2_without_partner_rejected(client_factory):
     sess = db.get(models.Session, ids["session"])
     with pytest.raises(ValueError):
         activities_mod.reconcile_session_activities(db, sess, [_input(ids, 2)])
+    db.close()
+
+
+def test_reconcile_no_purchase_coerces_slot_to_none(client_factory):
+    """Session whose purchase_id resolves to nothing is treated as solo;
+    any explicit slot must be silently coerced to None (not raise)."""
+    c = client_factory(num_people=2, with_partner=True)
+    db = TestSessionLocal()
+    ids = c._ids
+    # Build an orphan session that references a non-existent purchase
+    orphan = models.Session(
+        purchase_id=999999,
+        duration_minutes=30,
+        trainer="Alex",
+        session_date=__import__("datetime").datetime(2026, 5, 2, 10, 0),
+        created_by_user_id=ids["owner"],
+    )
+    db.add(orphan)
+    db.commit()
+    activities_mod.reconcile_session_activities(db, orphan, [_input(ids, 2)])
+    db.commit()
+    stored_slot = db.get(models.Session, orphan.id).activities[0].person_slot
+    assert stored_slot is None
     db.close()
 
 
