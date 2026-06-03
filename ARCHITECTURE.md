@@ -120,13 +120,14 @@ Four additional tables support optional structured activity logging per session:
 │ created_by_user_id──┼──►  │ values (JSON)       │
 │ is_active           │users│ notes               │
 └─────────────────────┘     │ sort_order          │
+                            │ person_slot         │
                             └─────────────────────┘
 ```
 
 - **activity_categories**: Admin-managed buckets (seeded: Strength, Cardio, Mobility, Other). Soft-delete via `is_active`.
 - **category_fields**: The metric schema for a category. `key` is the stable identifier used in the stored JSON; `field_type` ∈ `integer | decimal | duration | text` (`duration` stored as integer seconds). Soft-delete via `is_active` — a deactivated field's values stay in old logs (still rendered/editable) but it's dropped from the logging form and from required-field checks.
 - **activities**: Global library. `UNIQUE(category_id, name)` plus case-insensitive dedup in CRUD (recreating a name returns/​reactivates the existing row). `created_by_user_id` tracks the originator; every activity is usable by all users. Soft-delete via `is_active`.
-- **session_activities**: One row per activity per session. `values` is a JSON object keyed by `category_fields.key`, validated server-side against the category's **active** fields at write time. Cascades on session delete via the ORM relationship (`cascade="all, delete-orphan"`).
+- **session_activities**: One row per activity per session. `values` is a JSON object keyed by `category_fields.key`, validated server-side against the category's **active** fields at write time. Cascades on session delete via the ORM relationship (`cascade="all, delete-orphan"`). Includes optional `person_slot` column (1=owner, 2=partner, null=shared) for per-person activity tracking in couples sessions; legacy/single-person rows store `null` and render as "Both / Shared".
 
 ## Two-Person Session Sharing
 
@@ -145,6 +146,8 @@ Key helpers in `crud.py`:
 - `_user_session_ids(db, user_id)` — subquery returning distinct session IDs visible to a user (prevents duplicate rows in aggregates)
 - `_annotate_purchases(db, purchases, user_id)` — adds `is_owner`, `partner_name`, zeroes cost for partners
 - `_annotate_session(sess, purchase, user_id)` — adds `is_owner`, `partner_name`, `num_people` to sessions
+- `session_participant_ids(session, purchase)` — returns the set of user IDs (creator, purchase owner, and session/purchase partner) eligible to edit a session.
+- `user_can_edit_session(session, purchase, user_id)` — boolean check used by the edit/delete endpoints to authorize any participant. Duration-change pack reallocation is always scoped to the purchase owner (`logged_by_user_id`) regardless of which participant edits.
 
 ## Authentication & Authorization
 
