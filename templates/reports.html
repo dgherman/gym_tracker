@@ -77,9 +77,27 @@
       </div>
     </div>
 
-    <!-- Progress tab (filled in Task 6) -->
+    <!-- Progress tab -->
     <div class="tab-pane fade" id="tab-progress" role="tabpanel">
-      <p class="text-muted">Progress stats coming soon.</p>
+      <div id="progressEmpty" class="text-muted d-none">No activities logged in this range.</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle" id="progressTable">
+          <thead><tr><th>Activity</th><th>Category</th><th>Times</th><th>Best</th><th>Total</th><th>Latest</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="border rounded p-2 mt-2">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+          <strong>Trend</strong>
+          <div class="d-flex gap-2">
+            <select id="trendActivity" class="form-select form-select-sm" style="width:auto"></select>
+            <select id="trendField" class="form-select form-select-sm" style="width:auto"></select>
+          </div>
+        </div>
+        <div style="height:240px">
+          <canvas id="progressChart"></canvas>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -87,9 +105,14 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script>
+    function escapeHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
     window.addEventListener('DOMContentLoaded', () => {
       initCharts();
-      RangeControl.init((range) => loadReports(range));
+      RangeControl.init((range) => { loadReports(range); loadProgress(range); });
+
+      document.getElementById('trendActivity').addEventListener('change', e => selectActivity(e.target.value));
+      document.getElementById('trendField').addEventListener('change', drawTrend);
     });
 
     // Chart.js instances
@@ -198,8 +221,79 @@
       // Sessions remaining table
       document.querySelector('#remainingTable tbody').innerHTML =
         (sessions_remaining || []).map(p =>
-          `<tr><td>${p.duration} min</td><td>${p.num_people}</td><td>${p.remaining}</td></tr>`
+          `<tr><td>${escapeHtml(p.duration)} min</td><td>${escapeHtml(p.num_people)}</td><td>${escapeHtml(p.remaining)}</td></tr>`
         ).join('');
+    }
+
+    // ---- Progress tab ----
+    let progressData = { summary: [], series: {} };
+    let progressChart = null;
+
+    function loadProgress(range) {
+      if (!range) return;
+      fetch(`/reports/progress/data?start=${encodeURIComponent(range.start)}&end=${encodeURIComponent(range.end)}`,
+            { headers: { accept: 'application/json' } })
+        .then(r => r.json())
+        .then(d => { progressData = d; renderProgress(); });
+    }
+
+    function renderProgress() {
+      const tbody = document.querySelector('#progressTable tbody');
+      const empty = document.getElementById('progressEmpty');
+      const table = document.getElementById('progressTable');
+      if (!progressData.summary || !progressData.summary.length) {
+        empty.classList.remove('d-none'); table.classList.add('d-none');
+        if (progressChart) { progressChart.destroy(); progressChart = null; }
+        document.getElementById('trendActivity').innerHTML = '';
+        document.getElementById('trendField').innerHTML = '';
+        return;
+      }
+      empty.classList.add('d-none'); table.classList.remove('d-none');
+      tbody.innerHTML = progressData.summary.map(s => `
+        <tr style="cursor:pointer" data-activity="${escapeHtml(s.activity)}">
+          <td><strong>${escapeHtml(s.activity)}</strong></td>
+          <td class="text-muted">${escapeHtml(s.category)}</td>
+          <td>${s.times}</td>
+          <td>${escapeHtml(s.best ?? '—')}</td>
+          <td>${escapeHtml(s.total ?? '—')}</td>
+          <td>${escapeHtml(s.latest ?? '—')}</td>
+        </tr>`).join('');
+      tbody.querySelectorAll('tr').forEach(tr =>
+        tr.addEventListener('click', () => selectActivity(tr.dataset.activity)));
+
+      // activity dropdown
+      const actSel = document.getElementById('trendActivity');
+      actSel.innerHTML = progressData.summary.map(s => `<option>${escapeHtml(s.activity)}</option>`).join('');
+      selectActivity(progressData.summary[0].activity);
+    }
+
+    function selectActivity(name) {
+      document.getElementById('trendActivity').value = name;
+      const fields = Object.keys((progressData.series && progressData.series[name]) || {});
+      const fieldSel = document.getElementById('trendField');
+      fieldSel.innerHTML = fields.map(f => `<option>${escapeHtml(f)}</option>`).join('');
+      drawTrend();
+    }
+
+    function drawTrend() {
+      const name = document.getElementById('trendActivity').value;
+      const field = document.getElementById('trendField').value;
+      const pts = (((progressData.series || {})[name] || {})[field]) || [];
+      const ctx = document.getElementById('progressChart').getContext('2d');
+      if (progressChart) progressChart.destroy();
+      progressChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: pts.map(p => p.date.slice(0, 10)),
+          datasets: [{
+            label: `${escapeHtml(name)} · ${escapeHtml(field)}`,
+            data: pts.map(p => p.value),
+            borderColor: '#2d6cdf',
+            tension: 0.2
+          }]
+        },
+        options: { responsive: true, maintainAspectRatio: false }
+      });
     }
   </script>
 </body>
