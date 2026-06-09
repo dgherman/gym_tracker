@@ -1,0 +1,65 @@
+<!-- Shared date-range control. Host page must call RangeControl.init(onChange);
+     onChange(range) fires with {start, end} ISO strings (or null start = all-time). -->
+<div class="btn-group flex-wrap mb-2" id="rangeButtons" role="group">
+  <button type="button" class="btn btn-outline-primary active" data-range="current_month">Current Month</button>
+  <button type="button" class="btn btn-outline-primary" data-range="last_6_months">Last 6 Months</button>
+  <button type="button" class="btn btn-outline-primary" data-range="last_12_months">Last 12 Months</button>
+  <button type="button" class="btn btn-outline-primary" data-range="current_year">Current Year</button>
+  <button type="button" class="btn btn-outline-secondary" data-range="custom">Custom</button>
+</div>
+<div id="customRange" class="d-none align-items-center gap-2 mb-2 flex-wrap">
+  <span class="text-muted small">From</span>
+  <input type="date" id="customStart" class="form-control form-control-sm" style="width:auto">
+  <span class="text-muted small">To</span>
+  <input type="date" id="customEnd" class="form-control form-control-sm" style="width:auto">
+  <button type="button" id="customApply" class="btn btn-sm btn-success">Apply</button>
+</div>
+
+<script>
+const RangeControl = (function () {
+  let onChange = null;
+  let current = 'current_month';
+
+  function presetDates(range) {
+    const now = new Date(), start = new Date();
+    switch (range) {
+      case 'current_month':  start.setDate(1); start.setHours(0,0,0,0); break;
+      case 'last_6_months':  start.setMonth(now.getMonth()-5, 1); start.setHours(0,0,0,0); break;
+      case 'last_12_months': start.setFullYear(now.getFullYear()-1, now.getMonth(), 1); start.setHours(0,0,0,0); break;
+      case 'current_year':   start.setMonth(0, 1); start.setHours(0,0,0,0); break;
+    }
+    return { start: start.toISOString(), end: now.toISOString() };
+  }
+
+  function getRange() {
+    if (current === 'custom') {
+      const s = document.getElementById('customStart').value;
+      const e = document.getElementById('customEnd').value;
+      if (!s || !e) return null;
+      return { start: new Date(s + 'T00:00:00').toISOString(),
+               end:   new Date(e + 'T23:59:59').toISOString() };
+    }
+    return presetDates(current);
+  }
+
+  function init(cb) {
+    onChange = cb;
+    const btns = document.querySelectorAll('#rangeButtons button');
+    const custom = document.getElementById('customRange');
+    btns.forEach(b => b.addEventListener('click', () => {
+      btns.forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      current = b.dataset.range;
+      custom.classList.toggle('d-none', current !== 'custom');
+      if (current !== 'custom') onChange(getRange());
+    }));
+    document.getElementById('customApply').addEventListener('click', () => {
+      const r = getRange();
+      if (r) onChange(r); else alert('Pick both From and To dates');
+    });
+    onChange(getRange()); // initial load (current_month)
+  }
+
+  return { init, getRange };
+})();
+</script>
