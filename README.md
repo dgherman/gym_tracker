@@ -16,6 +16,7 @@ Simple gym sessions tracker
 - Reorganized the Reports page into three tabs: **Sessions** (training-minute charts), **Billing** (total cost + sessions-remaining per package), and a new **Progress** tab.
 - **Progress** shows the logged-in user's own activity stats — a summary table (Times / Best / Total / Latest per activity) plus a trend chart of any numeric field over time. Attribution is per `person_slot`: solo sessions and the user's tagged rows in couples sessions count; the other person's rows do not. `weight` totals are omitted (Σweight is meaningless); additive fields (reps/distance/duration) are summed.
 - New endpoint `GET /reports/progress/data` (login required) backed by `crud.user_activity_rows` + a pure `gym_tracker/progress.py` aggregator.
+- Progress summary table sorts by Category (ascending/descending), and each category can expand to show a grid of mini trend charts (one per activity, primary field over time).
 - Added a **Custom** date range (from/to) to a shared range control now used by both Reports and History; range is page-level and drives all tabs.
 - Mobile-responsive: scrollable tabs, wrapped pills, horizontally-scrollable tables, fluid charts. Numeric values trim trailing `.0`.
 
