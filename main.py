@@ -445,6 +445,8 @@ def reports_data(
     db: Session = Depends(get_db),
 ):
     user_id = request.session.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Login required")
     training = crud.get_training_by_trainer(db, start, end, user_id=user_id)
     total_cost = crud.get_total_cost(db, start, end, user_id=user_id)
 
@@ -468,6 +470,7 @@ def reports_data(
         "cost_by_duration": [{"duration": d, "cost": float(c)} for d, c in cost_results],
         "total_minutes_by_duration": [{"duration": d, "minutes": int(m)} for d, m in minutes_results],
         "minutes_by_partner": partner_results,
+        # sessions_remaining is a CURRENT snapshot — intentionally not date-filtered (unlike the rest of the report)
         "sessions_remaining": crud.get_summary(db, user_id=user_id),
     }
 

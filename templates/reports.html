@@ -117,6 +117,9 @@
 
       document.getElementById('trendActivity').addEventListener('change', e => selectActivity(e.target.value));
       document.getElementById('trendField').addEventListener('change', drawTrend);
+
+      document.querySelector('[data-bs-target="#tab-progress"]')
+        .addEventListener('shown.bs.tab', () => { if (progressChart) progressChart.resize(); });
     });
 
     // Chart.js instances
@@ -175,6 +178,7 @@
       const res = await fetch(
         `/reports/data?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
       );
+      if (!res.ok) { console.error('loadReports', res.status); return; }
       const data = await res.json();
       const {
         training,
@@ -237,8 +241,9 @@
       if (!range) return;
       fetch(`/reports/progress/data?start=${encodeURIComponent(range.start)}&end=${encodeURIComponent(range.end)}`,
             { headers: { accept: 'application/json' } })
-        .then(r => r.json())
-        .then(d => { progressData = d; renderProgress(); });
+        .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+        .then(d => { progressData = d; renderProgress(); })
+        .catch(err => console.error('loadProgress', err));
     }
 
     function renderProgress() {
@@ -257,7 +262,7 @@
         <tr style="cursor:pointer" data-activity="${escapeHtml(s.activity)}">
           <td><strong>${escapeHtml(s.activity)}</strong></td>
           <td class="text-muted">${escapeHtml(s.category)}</td>
-          <td>${s.times}</td>
+          <td>${Number(s.times)}</td>
           <td>${escapeHtml(s.best ?? '—')}</td>
           <td>${escapeHtml(s.total ?? '—')}</td>
           <td>${escapeHtml(s.latest ?? '—')}</td>

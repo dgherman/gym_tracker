@@ -185,6 +185,20 @@ def test_progress_endpoint_unauthenticated_returns_401():
     assert r.status_code == 401, f"Expected 401, got {r.status_code}: {r.text}"
 
 
+def test_reports_data_unauthenticated_returns_401():
+    """No session cookie → /reports/data must reject with 401."""
+    from starlette.testclient import TestClient
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+    import main as app_module
+    anon_client = TestClient(app_module.app, raise_server_exceptions=False)
+    r = anon_client.get(
+        "/reports/data?start=2026-01-01T00:00:00&end=2026-02-01T00:00:00",
+        headers={"accept": "application/json"},
+    )
+    assert r.status_code == 401, f"Expected 401, got {r.status_code}: {r.text}"
+
+
 def test_progress_endpoint_shape_and_attribution(couples):
     ids = couples._ids
     db = TestSessionLocal()
