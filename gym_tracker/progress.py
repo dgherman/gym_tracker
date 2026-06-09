@@ -5,8 +5,9 @@ Input rows are dicts (see crud.user_activity_rows) and field metadata is a dict
 No DB access here — keeps it unit-testable."""
 
 NUMERIC_TYPES = ("integer", "decimal", "duration")
-# Fields whose running sum is meaningless (intensity/load, not additive volume).
-NON_SUMMABLE = {"weight"}
+# These field KEYS are intensity/load metrics whose running sum is meaningless; a future
+# category-level `summable` flag would generalize this instead of an explicit key list.
+NON_SUMMABLE_KEYS = {"weight"}
 # Primary (headline) numeric field per category slug; fallback = first numeric by sort_order.
 PRIMARY_FIELD = {"strength": "weight", "cardio": "distance", "mobility": "duration"}
 
@@ -36,20 +37,23 @@ def _primary_field(slug, fields):
 def summarize(rows, fields_by_cat):
     """rows: list of dicts. fields_by_cat: {category_id: [field-meta]}.
     Returns {"summary": [...], "series": {activity_name: {field_key: [{date,value}]}}}."""
-    # group rows per activity (by name; names are unique within the library use here)
+    # Group by (activity_id, activity_name): activity names are only unique PER category
+    # (DB UniqueConstraint is on (category_id, name)), so two activities in different
+    # categories can share a name and must stay as separate summary rows.
     by_activity = {}
     order = []
     for r in rows:
-        name = r["activity_name"]
-        if name not in by_activity:
-            by_activity[name] = []
-            order.append(name)
-        by_activity[name].append(r)
+        key = (r["activity_id"], r["activity_name"])
+        if key not in by_activity:
+            by_activity[key] = []
+            order.append(key)
+        by_activity[key].append(r)
 
     summary = []
     series = {}
-    for name in order:
-        entries = sorted(by_activity[name], key=lambda r: r["session_date"])
+    for act_key in order:
+        _act_id, name = act_key
+        entries = sorted(by_activity[act_key], key=lambda r: r["session_date"])
         cat_id = entries[0]["category_id"]
         slug = entries[0]["category_slug"]
         fields = fields_by_cat.get(cat_id, [])
@@ -66,7 +70,7 @@ def summarize(rows, fields_by_cat):
         # total = sum of each summable field present in any entry
         total_parts = []
         for f in _numeric_fields(fields):
-            if f.key in NON_SUMMABLE:
+            if f.key in NON_SUMMABLE_KEYS:
                 continue
             present = [e["values"][f.key] for e in entries if e["values"].get(f.key) is not None]
             if present:
@@ -86,7 +90,9 @@ def summarize(rows, fields_by_cat):
             "times": len(entries), "best": best, "total": total, "latest": latest,
         })
 
-        # series: numeric fields only, date-ascending, one point per entry that has the value
+        # series: keyed by display activity_name so the frontend can select by name.
+        # If two activities ever share a name they share a series bucket — rare and
+        # acceptable; the summary table still shows both rows correctly via act_key.
         series[name] = {}
         for f in _numeric_fields(fields):
             pts = [{"date": e["session_date"], "value": e["values"][f.key]}

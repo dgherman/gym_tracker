@@ -64,6 +64,49 @@ def test_primary_fallback_first_numeric_when_slug_unknown():
     assert out["summary"][0]["best"] == "3"   # first numeric by sort_order = foo
 
 
+def test_same_name_different_activity_id_produces_two_summary_rows():
+    """Critical: two activities sharing a display name but with different activity_ids
+    and category_ids must NOT merge into a single summary row."""
+    STRENGTH2 = [F("reps", "integer", None, 1), F("weight", "decimal", "lbs", 2)]
+    CARDIO2 = [F("distance", "decimal", "km", 1), F("duration", "duration", "min", 2)]
+
+    def row2(date, act, act_id, cat_id, slug, vals):
+        return {
+            "session_date": date,
+            "activity_id": act_id,
+            "activity_name": act,
+            "category_id": cat_id,
+            "category_slug": slug,
+            "category_name": slug.title(),
+            "values": vals,
+        }
+
+    rows = [
+        row2("2026-01-01", "Squat", 10, 1, "strength", {"reps": 5, "weight": 100}),
+        row2("2026-01-02", "Squat", 20, 2, "cardio",   {"distance": 3, "duration": 15}),
+    ]
+    fields_by_cat = {1: STRENGTH2, 2: CARDIO2}
+    out = progress.summarize(rows, fields_by_cat)
+
+    assert len(out["summary"]) == 2, (
+        f"Expected 2 summary rows for same name / different activity_id, got {len(out['summary'])}"
+    )
+
+    # Identify each row by category
+    by_cat = {r["category"]: r for r in out["summary"]}
+    assert "Strength" in by_cat and "Cardio" in by_cat
+
+    # Strength row: best = max weight (100 lbs); total = reps only (weight is NON_SUMMABLE_KEYS)
+    s_row = by_cat["Strength"]
+    assert s_row["best"] == "100 lbs"
+    assert s_row["total"] == "5"   # reps summed; weight excluded
+
+    # Cardio row: best = distance (3 km); total = distance + duration
+    c_row = by_cat["Cardio"]
+    assert c_row["best"] == "3 km"
+    assert c_row["total"] == "3 km · 15 min"
+
+
 import datetime
 from gym_tracker import crud, models, activities as activities_mod, schemas
 from gym_tracker.tests.db_test_utils import TestSessionLocal

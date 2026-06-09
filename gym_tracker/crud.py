@@ -477,6 +477,7 @@ def user_activity_rows(db: Session, *, user_id: int, start, end):
         .all()
     )
     rows = []
+    cat_cache = {}
     for sess in sessions:
         purchase = db.get(models.Purchase, sess.purchase_id)
         num_people = purchase.num_people if purchase else 1
@@ -488,10 +489,14 @@ def user_activity_rows(db: Session, *, user_id: int, start, end):
                 pass  # couples: my tagged rows
             else:
                 continue
-            activity = sa.activity or db.get(models.Activity, sa.activity_id)
+            # sa.activity lazy-loads via the relationship; None = soft-deleted/orphaned
+            activity = sa.activity
             if not activity:
                 continue
-            category = db.get(models.ActivityCategory, activity.category_id)
+            cid = activity.category_id
+            if cid not in cat_cache:
+                cat_cache[cid] = db.get(models.ActivityCategory, cid)
+            category = cat_cache[cid]
             rows.append({
                 "session_date": sess.session_date,
                 "activity_id": activity.id,
