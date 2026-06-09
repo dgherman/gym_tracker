@@ -96,6 +96,7 @@ def summarize(rows, fields_by_cat):
         summary.append({
             "activity": name, "category": entries[0]["category_name"],
             "times": len(entries), "best": best, "total": total, "latest": latest,
+            "primary_field": primary.key if primary is not None else None,
         })
 
         # series: keyed by display activity_name so the frontend can select by name.

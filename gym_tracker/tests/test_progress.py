@@ -119,6 +119,26 @@ def test_integral_float_weight_trims_decimal():
     assert s["latest"] == "5 · 100 lbs", f"Expected '5 · 100 lbs', got {s['latest']!r}"
 
 
+def test_primary_field_key_in_summary():
+    """summary rows expose primary_field: 'weight' for Strength, 'distance' for Cardio,
+    None when a category has no numeric fields."""
+    # Strength row: primary_field == "weight"
+    strength_rows = [row("2026-01-01", "Bench Press", 1, "strength", {"reps": 5, "weight": 80})]
+    out_s = progress.summarize(strength_rows, {1: STRENGTH})
+    assert out_s["summary"][0]["primary_field"] == "weight"
+
+    # Cardio row: primary_field == "distance"
+    cardio_rows = [row("2026-01-01", "Run", 2, "cardio", {"distance": 5, "duration": 30})]
+    out_c = progress.summarize(cardio_rows, {2: CARDIO})
+    assert out_c["summary"][0]["primary_field"] == "distance"
+
+    # No numeric fields: primary_field == None
+    text_only = [F("notes", "text", None, 1)]
+    no_num_rows = [row("2026-01-01", "Yoga", 3, "mobility", {"notes": "felt good"})]
+    out_n = progress.summarize(no_num_rows, {3: text_only})
+    assert out_n["summary"][0]["primary_field"] is None
+
+
 def test_fractional_float_distance_preserved():
     """Fractional float values must NOT be truncated (2.5 km stays '2.5 km')."""
     rows = [

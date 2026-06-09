@@ -86,7 +86,15 @@
       <div id="progressEmpty" class="text-muted d-none">No activities logged in this range.</div>
       <div class="table-responsive">
         <table class="table table-sm align-middle" id="progressTable">
-          <thead><tr><th>Activity</th><th>Category</th><th>Times</th><th>Best</th><th>Total</th><th>Latest</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Activity</th>
+              <th id="thCategory" style="cursor:pointer;user-select:none">
+                Category <span id="categoryCaret"></span>
+              </th>
+              <th>Times</th><th>Best</th><th>Total</th><th>Latest</th>
+            </tr>
+          </thead>
           <tbody></tbody>
         </table>
       </div>
@@ -102,6 +110,8 @@
           <canvas id="progressChart"></canvas>
         </div>
       </div>
+      <!-- Per-category all-charts expand section -->
+      <div id="progressByCategory" class="mt-3"></div>
     </div>
   </div>
 
@@ -117,6 +127,15 @@
 
       document.getElementById('trendActivity').addEventListener('change', e => selectActivity(e.target.value));
       document.getElementById('trendField').addEventListener('change', drawTrend);
+
+      document.getElementById('thCategory').addEventListener('click', () => {
+        if (categorySortDir === null || categorySortDir === 'desc') {
+          categorySortDir = 'asc';
+        } else {
+          categorySortDir = 'desc';
+        }
+        renderProgress();
+      });
 
       document.querySelector('[data-bs-target="#tab-progress"]')
         .addEventListener('shown.bs.tab', () => { if (progressChart) progressChart.resize(); });
@@ -237,6 +256,31 @@
     let progressData = { summary: [], series: {} };
     let progressChart = null;
 
+    // Category sort state: null = backend order (default), 'asc', or 'desc'.
+    // Default is 'asc' so the caret is visible on first render.
+    let categorySortDir = 'asc';
+
+    // Registry of mini Chart.js instances keyed by canvas id, for leak-free lifecycle.
+    // Format: { canvasId: Chart instance }
+    const miniCharts = {};
+
+    function _destroyAllMiniCharts() {
+      for (const id of Object.keys(miniCharts)) {
+        miniCharts[id].destroy();
+        delete miniCharts[id];
+      }
+    }
+
+    function _destroyCategoryMiniCharts(catKey) {
+      // catKey is used as a prefix in canvas ids: mini-<catKey>-<idx>
+      for (const id of Object.keys(miniCharts)) {
+        if (id.startsWith('mini-' + catKey + '-')) {
+          miniCharts[id].destroy();
+          delete miniCharts[id];
+        }
+      }
+    }
+
     function loadProgress(range) {
       if (!range) return;
       fetch(`/reports/progress/data?start=${encodeURIComponent(range.start)}&end=${encodeURIComponent(range.end)}`,
@@ -247,18 +291,38 @@
     }
 
     function renderProgress() {
+      // Tear down all existing mini-charts before rebuilding
+      _destroyAllMiniCharts();
+
       const tbody = document.querySelector('#progressTable tbody');
       const empty = document.getElementById('progressEmpty');
       const table = document.getElementById('progressTable');
+      const byCatSection = document.getElementById('progressByCategory');
+
       if (!progressData.summary || !progressData.summary.length) {
         empty.classList.remove('d-none'); table.classList.add('d-none');
         if (progressChart) { progressChart.destroy(); progressChart = null; }
         document.getElementById('trendActivity').innerHTML = '';
         document.getElementById('trendField').innerHTML = '';
+        byCatSection.innerHTML = '';
+        document.getElementById('categoryCaret').textContent = '';
         return;
       }
+
       empty.classList.add('d-none'); table.classList.remove('d-none');
-      tbody.innerHTML = progressData.summary.map(s => `
+
+      // Build a sorted copy for rendering; never mutate progressData.summary in-place.
+      let displayRows = progressData.summary.slice();
+      if (categorySortDir === 'asc') {
+        displayRows.sort((a, b) => a.category.localeCompare(b.category));
+      } else if (categorySortDir === 'desc') {
+        displayRows.sort((a, b) => b.category.localeCompare(a.category));
+      }
+      // Update caret indicator
+      const caretEl = document.getElementById('categoryCaret');
+      caretEl.textContent = categorySortDir === 'asc' ? '▲' : (categorySortDir === 'desc' ? '▼' : '');
+
+      tbody.innerHTML = displayRows.map(s => `
         <tr style="cursor:pointer" data-activity="${escapeHtml(s.activity)}">
           <td><strong>${escapeHtml(s.activity)}</strong></td>
           <td class="text-muted">${escapeHtml(s.category)}</td>
@@ -270,10 +334,13 @@
       tbody.querySelectorAll('tr').forEach(tr =>
         tr.addEventListener('click', () => selectActivity(tr.dataset.activity)));
 
-      // activity dropdown
+      // activity dropdown — always in backend order (trend lookup is by activity name)
       const actSel = document.getElementById('trendActivity');
       actSel.innerHTML = progressData.summary.map(s => `<option>${escapeHtml(s.activity)}</option>`).join('');
       selectActivity(progressData.summary[0].activity);
+
+      // Build per-category all-charts section
+      _buildByCategorySection(byCatSection, progressData.summary);
     }
 
     function selectActivity(name) {
@@ -302,6 +369,121 @@
           }]
         },
         options: { responsive: true, maintainAspectRatio: false }
+      });
+    }
+
+    // ---- Per-category all-charts section ----
+
+    function _slugify(s) {
+      // Produce a safe ASCII key for use in element ids
+      return s.replace(/[^a-zA-Z0-9]/g, '_');
+    }
+
+    function _buildByCategorySection(container, summary) {
+      // Group summary rows by category, preserving first-seen order.
+      const catOrder = [];
+      const catGroups = {};
+      for (const row of summary) {
+        if (!catGroups[row.category]) {
+          catGroups[row.category] = [];
+          catOrder.push(row.category);
+        }
+        catGroups[row.category].push(row);
+      }
+
+      let html = '';
+      for (const cat of catOrder) {
+        const catKey = _slugify(cat);
+        const gridId = `miniGrid-${catKey}`;
+        html += `
+          <div class="mb-3">
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <strong>${escapeHtml(cat)}</strong>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2"
+                      onclick="toggleCategoryCharts('${catKey}', '${escapeHtml(cat)}', this)"
+                      data-expanded="false">
+                View all charts ▾
+              </button>
+            </div>
+            <div id="${gridId}" class="row g-2" style="display:none"></div>
+          </div>`;
+      }
+      container.innerHTML = html;
+    }
+
+    function toggleCategoryCharts(catKey, catName, btn) {
+      const expanded = btn.getAttribute('data-expanded') === 'true';
+      const grid = document.getElementById(`miniGrid-${catKey}`);
+
+      if (expanded) {
+        // Collapse: destroy this category's mini-charts and hide grid
+        _destroyCategoryMiniCharts(catKey);
+        grid.style.display = 'none';
+        btn.setAttribute('data-expanded', 'false');
+        btn.textContent = 'View all charts ▾';
+      } else {
+        // Expand: show grid then create charts (canvas must be visible for sizing)
+        grid.style.display = '';
+        btn.setAttribute('data-expanded', 'true');
+        btn.textContent = 'Hide charts ▴';
+        _renderCategoryMiniCharts(catKey, catName, grid);
+      }
+    }
+
+    function _renderCategoryMiniCharts(catKey, catName, grid) {
+      // Find all activities belonging to this category (from backend-order summary)
+      const activities = progressData.summary.filter(s => s.category === catName);
+      let innerHtml = '';
+      activities.forEach((s, idx) => {
+        const canvasId = `mini-${catKey}-${idx}`;
+        const hasSeries = s.primary_field && progressData.series[s.activity] &&
+                          progressData.series[s.activity][s.primary_field] &&
+                          progressData.series[s.activity][s.primary_field].length > 0;
+        innerHtml += `
+          <div class="col-12 col-md-6 col-lg-4">
+            <div class="border rounded p-2">
+              <div class="small fw-semibold mb-1 text-truncate" title="${escapeHtml(s.activity)}">${escapeHtml(s.activity)}</div>
+              ${hasSeries
+                ? `<div style="height:160px;position:relative"><canvas id="${canvasId}"></canvas></div>`
+                : `<div style="height:160px" class="d-flex align-items-center justify-content-center text-muted small">(no numeric data)</div>`
+              }
+            </div>
+          </div>`;
+      });
+      grid.innerHTML = innerHtml;
+
+      // Now create Chart.js instances for canvases (grid is already visible)
+      activities.forEach((s, idx) => {
+        if (!s.primary_field) return;
+        const seriesForField = (progressData.series[s.activity] || {})[s.primary_field];
+        if (!seriesForField || !seriesForField.length) return;
+        const canvasId = `mini-${catKey}-${idx}`;
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        const chart = new Chart(canvas.getContext('2d'), {
+          type: 'line',
+          data: {
+            labels: seriesForField.map(p => p.date.slice(0, 10)),
+            datasets: [{
+              label: `${escapeHtml(s.primary_field)}`,
+              data: seriesForField.map(p => p.value),
+              borderColor: '#2d6cdf',
+              backgroundColor: 'rgba(45,108,223,0.1)',
+              tension: 0.2,
+              pointRadius: 2,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { ticks: { maxTicksLimit: 5, font: { size: 10 } } },
+              y: { ticks: { font: { size: 10 } } }
+            }
+          }
+        });
+        miniCharts[canvasId] = chart;
       });
     }
   </script>

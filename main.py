@@ -139,6 +139,7 @@ class ProgressSummaryRow(BaseModel):
     best: str | None = None
     total: str | None = None
     latest: str | None = None
+    primary_field: str | None = None
 
 class ProgressData(BaseModel):
     summary: List[ProgressSummaryRow]
