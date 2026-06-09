@@ -13,7 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from gym_tracker import activities as activities_mod
-from gym_tracker import crud, models, schemas
+from gym_tracker import crud, models, progress, schemas
 from gym_tracker.auth import router as auth_router
 from gym_tracker.config import get_settings
 from gym_tracker.database import SessionLocal, engine
@@ -127,8 +127,23 @@ class ReportsData(BaseModel):
     cost_by_duration: List[CostByDuration]
     total_minutes_by_duration: List[MinutesByDuration]
     minutes_by_partner: List[MinutesByPartner]
+    sessions_remaining: List[dict] = []
 
     model_config = {"from_attributes": True}
+
+
+class ProgressSummaryRow(BaseModel):
+    activity: str
+    category: str
+    times: int
+    best: str | None = None
+    total: str | None = None
+    latest: str | None = None
+    primary_field: str | None = None
+
+class ProgressData(BaseModel):
+    summary: List[ProgressSummaryRow]
+    series: dict  # {activity: {field_key: [{date, value}]}}
 
 # -------------------------------------------------------------
 # Health
@@ -431,6 +446,8 @@ def reports_data(
     db: Session = Depends(get_db),
 ):
     user_id = request.session.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Login required")
     training = crud.get_training_by_trainer(db, start, end, user_id=user_id)
     total_cost = crud.get_total_cost(db, start, end, user_id=user_id)
 
@@ -454,7 +471,32 @@ def reports_data(
         "cost_by_duration": [{"duration": d, "cost": float(c)} for d, c in cost_results],
         "total_minutes_by_duration": [{"duration": d, "minutes": int(m)} for d, m in minutes_results],
         "minutes_by_partner": partner_results,
+        # sessions_remaining is a CURRENT snapshot — intentionally not date-filtered (unlike the rest of the report)
+        "sessions_remaining": crud.get_summary(db, user_id=user_id),
     }
+
+
+@app.get("/reports/progress/data", response_model=ProgressData)
+def reports_progress_data(
+    request: Request,
+    start: datetime = Query(...),
+    end: datetime = Query(...),
+    db: Session = Depends(get_db),
+):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Login required")
+    rows = crud.user_activity_rows(db, user_id=user_id, start=start, end=end)
+    cat_ids = {r["category_id"] for r in rows}
+    fields_by_cat = {}
+    for cid in cat_ids:
+        fields_by_cat[cid] = (
+            db.query(models.CategoryField)
+            .filter(models.CategoryField.category_id == cid)
+            .order_by(models.CategoryField.sort_order)
+            .all()
+        )
+    return progress.summarize(rows, fields_by_cat)
 
 
 # -------------------------------------------------------------

@@ -16,12 +16,8 @@
   </nav>
   <h1 class="mb-4">History</h1>
 
-  <div class="btn-group mb-4" id="rangeButtons" role="group">
-    <button class="btn btn-outline-primary" data-range="current_month">Current Month</button>
-    <button class="btn btn-outline-primary" data-range="last_6_months">Last 6 Months</button>
-    <button class="btn btn-outline-primary" data-range="last_12_months">Last 12 Months</button>
-    <button class="btn btn-outline-primary" data-range="current_year">Current Year</button>
-  </div>
+  <!-- Date-range control (shared partial) -->
+  {% include "_range_control.html" %}
 
   <div id="history-content"></div>
   <a href="/" class="btn btn-secondary mt-4">Back</a>
@@ -103,33 +99,11 @@
       });
     }
 
-    // Tabs
-    const buttons = document.querySelectorAll('#rangeButtons button');
-    let currentRange = 'current_month';
-    buttons.forEach(btn => btn.addEventListener('click', () => {
-      buttons.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      currentRange = btn.dataset.range;
-      loadHistory(currentRange);
-    }));
     window.addEventListener('DOMContentLoaded', () => {
-      buttons[0].classList.add('active');
       loadTrainers();
       ActivitySection.load().then(() => ActivitySection.init());
-      loadHistory(currentRange);
+      RangeControl.init((range) => loadHistory(range));
     });
-
-    // Date-range
-    function getDates(range) {
-      const now = new Date(), start = new Date();
-      switch(range) {
-        case 'current_month':    start.setDate(1); start.setHours(0,0,0,0); break;
-        case 'last_6_months':    start.setMonth(now.getMonth()-5, 1); start.setHours(0,0,0,0); break;
-        case 'last_12_months':   start.setFullYear(now.getFullYear()-1, now.getMonth(), 1); start.setHours(0,0,0,0); break;
-        case 'current_year':     start.setMonth(0, 1); start.setHours(0,0,0,0); break;
-      }
-      return { start: start.toISOString(), end: now.toISOString() };
-    }
 
     // Alerts
     function showAlert(msg, type='info') {
@@ -142,7 +116,7 @@
 
     // Load & render
     async function loadHistory(range) {
-      const { start, end } = getDates(range);
+      const { start, end } = range;
       const [sRes, pRes] = await Promise.all([
         fetch(`/history/sessions/?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
         fetch(`/history/purchases/?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`)
@@ -298,7 +272,7 @@
         .then(r=>r.json()).then(d=>{
           if (d.success) {
             showAlert(`${type.charAt(0).toUpperCase()+type.slice(1)} deleted.`, 'warning');
-            setTimeout(() => loadHistory(currentRange), 1500);
+            setTimeout(() => loadHistory(RangeControl.getRange()), 1500);
           } else {
             showAlert(`Failed to delete ${type}.`, 'danger');
           }
@@ -342,7 +316,7 @@
           if (d.success) {
             showAlert('Session updated.', 'success');
             bootstrap.Modal.getInstance(document.getElementById('editSessionModal')).hide();
-            setTimeout(() => loadHistory(currentRange), 1500);
+            setTimeout(() => loadHistory(RangeControl.getRange()), 1500);
           } else {
             showAlert('Failed to update session.', 'danger');
           }

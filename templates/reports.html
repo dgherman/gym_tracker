@@ -7,86 +7,138 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"/>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    /* Shrink both charts to 66% width and center */
     .chart-container {
-      width: 66%;
-      margin: auto;
+      width: 100%;
+    }
+    @media (min-width: 768px) {
+      .chart-container {
+        width: 66%;
+        margin: auto;
+      }
     }
   </style>
 </head>
 <body class="bg-light p-4">
   {% include "_nav.html" %}
-  <nav class="navbar navbar-light mb-4">
-    <a class="navbar-brand" href="/">Gym Tracker</a>
-  </nav>
 
   <h1 class="mb-4">Reports</h1>
 
-  <!-- Date-range tabs -->
-  <div class="btn-group mb-4" id="rangeButtons" role="group">
-    <button class="btn btn-outline-primary" data-range="current_month">Current Month</button>
-    <button class="btn btn-outline-primary" data-range="last_6_months">Last 6 Months</button>
-    <button class="btn btn-outline-primary" data-range="last_12_months">Last 12 Months</button>
-    <button class="btn btn-outline-primary" data-range="current_year">Current Year</button>
-  </div>
+  <!-- Date-range control (shared partial) -->
+  {% include "_range_control.html" %}
 
-  <!-- Summaries -->
-  <div class="mb-4">
-    <h3>Total Cost: <span id="totalCost">$0.00</span></h3>
-    <h3>Total Time: <span id="totalMinutes">0</span></h3>
-  </div>
+  <!-- Tab navigation -->
+  <ul class="nav nav-tabs flex-nowrap overflow-auto mb-3" id="reportTabs" role="tablist">
+    <li class="nav-item">
+      <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-sessions" type="button" role="tab">Sessions</button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-billing" type="button" role="tab">Billing</button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-progress" type="button" role="tab">Progress</button>
+    </li>
+  </ul>
 
-  <div class="row">
-    <!-- Training minutes pie -->
-    <div class="col-md-6 mb-4 chart-container">
-      <h5>Minutes by Trainer</h5>
-      <canvas id="trainingChart"></canvas>
+  <div class="tab-content">
+    <!-- Sessions tab -->
+    <div class="tab-pane fade show active" id="tab-sessions" role="tabpanel">
+      <div class="mb-4">
+        <h3>Total Time: <span id="totalMinutes">0</span></h3>
+      </div>
+
+      <div class="row">
+        <div class="col-md-6 mb-4 chart-container">
+          <h5>Minutes by Trainer</h5>
+          <canvas id="trainingChart"></canvas>
+        </div>
+
+        <div class="col-md-6 mb-4 chart-container">
+          <h5>Minutes by Session Duration</h5>
+          <canvas id="durationChart"></canvas>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="col-md-6 mb-4 chart-container">
+          <h5>Minutes by Training Partner</h5>
+          <canvas id="partnerChart"></canvas>
+        </div>
+      </div>
     </div>
 
-    <!-- Minutes by session duration pie -->
-    <div class="col-md-6 mb-4 chart-container">
-      <h5>Minutes by Session Duration</h5>
-      <canvas id="durationChart"></canvas>
-    </div>
-  </div>
+    <!-- Billing tab -->
+    <div class="tab-pane fade" id="tab-billing" role="tabpanel">
+      <div class="mb-4">
+        <h3>Total Cost: <span id="totalCost">$0.00</span></h3>
+      </div>
 
-  <div class="row">
-    <!-- Minutes by partner pie -->
-    <div class="col-md-6 mb-4 chart-container">
-      <h5>Minutes by Training Partner</h5>
-      <canvas id="partnerChart"></canvas>
+      <h5 class="mt-3">Sessions remaining</h5>
+      <div class="table-responsive">
+        <table class="table table-sm" id="remainingTable">
+          <thead><tr><th>Package</th><th>People</th><th>Remaining</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Progress tab -->
+    <div class="tab-pane fade" id="tab-progress" role="tabpanel">
+      <div id="progressEmpty" class="text-muted d-none">No activities logged in this range.</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle" id="progressTable">
+          <thead>
+            <tr>
+              <th>Activity</th>
+              <th id="thCategory" style="cursor:pointer;user-select:none">
+                Category <span id="categoryCaret"></span>
+              </th>
+              <th>Times</th><th>Best</th><th>Total</th><th>Latest</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="border rounded p-2 mt-2">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+          <strong>Trend</strong>
+          <div class="d-flex gap-2">
+            <select id="trendActivity" class="form-select form-select-sm" style="width:auto"></select>
+            <select id="trendField" class="form-select form-select-sm" style="width:auto"></select>
+          </div>
+        </div>
+        <div style="height:240px">
+          <canvas id="progressChart"></canvas>
+        </div>
+      </div>
+      <!-- Per-category all-charts expand section -->
+      <div id="progressByCategory" class="mt-3"></div>
     </div>
   </div>
 
   <a href="/" class="btn btn-secondary mt-4">Back</a>
 
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    // Helpers
-    function getDates(range) {
-      const now = new Date(), start = new Date();
-      switch (range) {
-        case 'current_month':    start.setDate(1); start.setHours(0,0,0,0); break;
-        case 'last_6_months':    start.setMonth(now.getMonth()-5, 1); start.setHours(0,0,0,0); break;
-        case 'last_12_months':   start.setFullYear(now.getFullYear()-1, now.getMonth(), 1); start.setHours(0,0,0,0); break;
-        case 'current_year':     start.setMonth(0, 1); start.setHours(0,0,0,0); break;
-      }
-      return { start: start.toISOString(), end: now.toISOString() };
-    }
-
-    // Range tabs
-    const buttons = document.querySelectorAll('#rangeButtons button');
-    let currentRange = 'current_month';
-    buttons.forEach(btn => btn.addEventListener('click', () => {
-      buttons.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      currentRange = btn.dataset.range;
-      loadReports(currentRange);
-    }));
+    function escapeHtml(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
     window.addEventListener('DOMContentLoaded', () => {
-      buttons[0].classList.add('active');
       initCharts();
-      loadReports(currentRange);
+      RangeControl.init((range) => { loadReports(range); loadProgress(range); });
+
+      document.getElementById('trendActivity').addEventListener('change', e => selectActivity(e.target.value));
+      document.getElementById('trendField').addEventListener('change', drawTrend);
+
+      document.getElementById('thCategory').addEventListener('click', () => {
+        if (categorySortDir === null || categorySortDir === 'desc') {
+          categorySortDir = 'asc';
+        } else {
+          categorySortDir = 'desc';
+        }
+        renderProgress();
+      });
+
+      document.querySelector('[data-bs-target="#tab-progress"]')
+        .addEventListener('shown.bs.tab', () => { if (progressChart) progressChart.resize(); });
     });
 
     // Chart.js instances
@@ -116,19 +168,15 @@
 
     // Generate a consistent color for a given string using a hash function
     function generateTrainerColor(trainerName) {
-      // Simple string hash function
       let hash = 0;
       for (let i = 0; i < trainerName.length; i++) {
         const char = trainerName.charCodeAt(i);
         hash = ((hash << 5) - hash) + char;
-        hash = hash & hash; // Convert to 32-bit integer
+        hash = hash & hash;
       }
-
-      // Convert hash to positive number and generate HSL color
       const hue = Math.abs(hash) % 360;
-      const saturation = 65 + (Math.abs(hash) % 25); // 65-90%
-      const lightness = 45 + (Math.abs(hash) % 15);  // 45-60%
-
+      const saturation = 65 + (Math.abs(hash) % 25);
+      const lightness = 45 + (Math.abs(hash) % 15);
       return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
     }
 
@@ -137,31 +185,27 @@
       const hrs = Math.floor(totalMinutes / 60);
       const mins = totalMinutes % 60;
       const parts = [];
-      if (hrs > 0) {
-        parts.push(`${hrs} hour${hrs === 1 ? '' : 's'}`);
-      }
-      if (mins > 0) {
-        parts.push(`${mins} minute${mins === 1 ? '' : 's'}`);
-      }
-      // If exactly zero minutes (totalMinutes = 0) or exact hours, ensure something shows
-      if (parts.length === 0) {
-        return '0 minutes';
-      }
+      if (hrs > 0) parts.push(`${hrs} hour${hrs === 1 ? '' : 's'}`);
+      if (mins > 0) parts.push(`${mins} minute${mins === 1 ? '' : 's'}`);
+      if (parts.length === 0) return '0 minutes';
       return parts.join(' and ');
     }
 
-    // Fetch & render
+    // Fetch & render sessions + billing
     async function loadReports(range) {
-      const { start, end } = getDates(range);
+      const { start, end } = range;
       const res = await fetch(
         `/reports/data?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
       );
+      if (!res.ok) { console.error('loadReports', res.status); return; }
+      const data = await res.json();
       const {
         training,
         total_cost,
         total_minutes_by_duration,
-        minutes_by_partner
-      } = await res.json();
+        minutes_by_partner,
+        sessions_remaining,
+      } = data;
 
       // Total cost
       document.getElementById('totalCost').textContent = `$${total_cost.toFixed(2)}`;
@@ -200,6 +244,246 @@
       partnerChart.data.datasets[0].data = partnerData;
       partnerChart.data.datasets[0].backgroundColor = partnerColors;
       partnerChart.update();
+
+      // Sessions remaining table
+      document.querySelector('#remainingTable tbody').innerHTML =
+        (sessions_remaining || []).map(p =>
+          `<tr><td>${escapeHtml(p.duration)} min</td><td>${escapeHtml(p.num_people)}</td><td>${escapeHtml(p.remaining)}</td></tr>`
+        ).join('');
+    }
+
+    // ---- Progress tab ----
+    let progressData = { summary: [], series: {} };
+    let progressChart = null;
+
+    // Category sort state: null = backend order (default), 'asc', or 'desc'.
+    // Default is 'asc' so the caret is visible on first render.
+    let categorySortDir = 'asc';
+
+    // Registry of mini Chart.js instances keyed by canvas id, for leak-free lifecycle.
+    // Format: { canvasId: Chart instance }
+    const miniCharts = {};
+
+    function _destroyAllMiniCharts() {
+      for (const id of Object.keys(miniCharts)) {
+        miniCharts[id].destroy();
+        delete miniCharts[id];
+      }
+    }
+
+    function _destroyCategoryMiniCharts(catKey) {
+      // catKey is used as a prefix in canvas ids: mini-<catKey>-<idx>
+      for (const id of Object.keys(miniCharts)) {
+        if (id.startsWith('mini-' + catKey + '-')) {
+          miniCharts[id].destroy();
+          delete miniCharts[id];
+        }
+      }
+    }
+
+    function loadProgress(range) {
+      if (!range) return;
+      fetch(`/reports/progress/data?start=${encodeURIComponent(range.start)}&end=${encodeURIComponent(range.end)}`,
+            { headers: { accept: 'application/json' } })
+        .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+        .then(d => { progressData = d; renderProgress(); })
+        .catch(err => console.error('loadProgress', err));
+    }
+
+    function renderProgress() {
+      // Tear down all existing mini-charts before rebuilding
+      _destroyAllMiniCharts();
+
+      const tbody = document.querySelector('#progressTable tbody');
+      const empty = document.getElementById('progressEmpty');
+      const table = document.getElementById('progressTable');
+      const byCatSection = document.getElementById('progressByCategory');
+
+      if (!progressData.summary || !progressData.summary.length) {
+        empty.classList.remove('d-none'); table.classList.add('d-none');
+        if (progressChart) { progressChart.destroy(); progressChart = null; }
+        document.getElementById('trendActivity').innerHTML = '';
+        document.getElementById('trendField').innerHTML = '';
+        byCatSection.innerHTML = '';
+        document.getElementById('categoryCaret').textContent = '';
+        return;
+      }
+
+      empty.classList.add('d-none'); table.classList.remove('d-none');
+
+      // Build a sorted copy for rendering; never mutate progressData.summary in-place.
+      let displayRows = progressData.summary.slice();
+      if (categorySortDir === 'asc') {
+        displayRows.sort((a, b) => a.category.localeCompare(b.category));
+      } else if (categorySortDir === 'desc') {
+        displayRows.sort((a, b) => b.category.localeCompare(a.category));
+      }
+      // Update caret indicator
+      const caretEl = document.getElementById('categoryCaret');
+      caretEl.textContent = categorySortDir === 'asc' ? '▲' : (categorySortDir === 'desc' ? '▼' : '');
+
+      tbody.innerHTML = displayRows.map(s => `
+        <tr style="cursor:pointer" data-activity="${escapeHtml(s.activity)}">
+          <td><strong>${escapeHtml(s.activity)}</strong></td>
+          <td class="text-muted">${escapeHtml(s.category)}</td>
+          <td>${Number(s.times)}</td>
+          <td>${escapeHtml(s.best ?? '—')}</td>
+          <td>${escapeHtml(s.total ?? '—')}</td>
+          <td>${escapeHtml(s.latest ?? '—')}</td>
+        </tr>`).join('');
+      tbody.querySelectorAll('tr').forEach(tr =>
+        tr.addEventListener('click', () => selectActivity(tr.dataset.activity)));
+
+      // activity dropdown — always in backend order (trend lookup is by activity name)
+      const actSel = document.getElementById('trendActivity');
+      actSel.innerHTML = progressData.summary.map(s => `<option>${escapeHtml(s.activity)}</option>`).join('');
+      selectActivity(progressData.summary[0].activity);
+
+      // Build per-category all-charts section
+      _buildByCategorySection(byCatSection, progressData.summary);
+    }
+
+    function selectActivity(name) {
+      document.getElementById('trendActivity').value = name;
+      const fields = Object.keys((progressData.series && progressData.series[name]) || {});
+      const fieldSel = document.getElementById('trendField');
+      fieldSel.innerHTML = fields.map(f => `<option>${escapeHtml(f)}</option>`).join('');
+      drawTrend();
+    }
+
+    function drawTrend() {
+      const name = document.getElementById('trendActivity').value;
+      const field = document.getElementById('trendField').value;
+      const pts = (((progressData.series || {})[name] || {})[field]) || [];
+      const ctx = document.getElementById('progressChart').getContext('2d');
+      if (progressChart) progressChart.destroy();
+      progressChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: pts.map(p => p.date.slice(0, 10)),
+          datasets: [{
+            label: `${escapeHtml(name)} · ${escapeHtml(field)}`,
+            data: pts.map(p => p.value),
+            borderColor: '#2d6cdf',
+            tension: 0.2
+          }]
+        },
+        options: { responsive: true, maintainAspectRatio: false }
+      });
+    }
+
+    // ---- Per-category all-charts section ----
+
+    function _buildByCategorySection(container, summary) {
+      // Group summary rows by category, preserving first-seen order.
+      const catOrder = [];
+      const catGroups = {};
+      for (const row of summary) {
+        if (!catGroups[row.category]) {
+          catGroups[row.category] = [];
+          catOrder.push(row.category);
+        }
+        catGroups[row.category].push(row);
+      }
+
+      let html = '';
+      catOrder.forEach((cat, idx) => {
+        const catKey = 'cat' + idx;
+        const gridId = `miniGrid-${catKey}`;
+        html += `
+          <div class="mb-3">
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <strong>${escapeHtml(cat)}</strong>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-2"
+                      onclick="toggleCategoryCharts(this)"
+                      data-cat-key="${catKey}"
+                      data-cat-name="${escapeHtml(cat)}"
+                      data-expanded="false">
+                View all charts ▾
+              </button>
+            </div>
+            <div id="${gridId}" class="row g-2" style="display:none"></div>
+          </div>`;
+      });
+      container.innerHTML = html;
+    }
+
+    function toggleCategoryCharts(btn) {
+      const catKey = btn.dataset.catKey;
+      const catName = btn.dataset.catName;
+      const expanded = btn.getAttribute('data-expanded') === 'true';
+      const grid = document.getElementById(`miniGrid-${catKey}`);
+
+      if (expanded) {
+        // Collapse: destroy this category's mini-charts and hide grid
+        _destroyCategoryMiniCharts(catKey);
+        grid.style.display = 'none';
+        btn.setAttribute('data-expanded', 'false');
+        btn.textContent = 'View all charts ▾';
+      } else {
+        // Expand: show grid then create charts (canvas must be visible for sizing)
+        grid.style.display = '';
+        btn.setAttribute('data-expanded', 'true');
+        btn.textContent = 'Hide charts ▴';
+        _renderCategoryMiniCharts(catKey, catName, grid);
+      }
+    }
+
+    function _renderCategoryMiniCharts(catKey, catName, grid) {
+      // Find all activities belonging to this category (from backend-order summary)
+      const activities = progressData.summary.filter(s => s.category === catName);
+      let innerHtml = '';
+      activities.forEach((s, idx) => {
+        const canvasId = `mini-${catKey}-${idx}`;
+        const hasSeries = s.primary_field && progressData.series[s.activity] &&
+                          progressData.series[s.activity][s.primary_field] &&
+                          progressData.series[s.activity][s.primary_field].length > 0;
+        innerHtml += `
+          <div class="col-12 col-md-6 col-lg-4">
+            <div class="border rounded p-2">
+              <div class="small fw-semibold mb-1 text-truncate" title="${escapeHtml(s.activity)}">${escapeHtml(s.activity)}</div>
+              ${hasSeries
+                ? `<div style="height:160px;position:relative"><canvas id="${canvasId}"></canvas></div>`
+                : `<div style="height:160px" class="d-flex align-items-center justify-content-center text-muted small">(no numeric data)</div>`
+              }
+            </div>
+          </div>`;
+      });
+      grid.innerHTML = innerHtml;
+
+      // Now create Chart.js instances for canvases (grid is already visible)
+      activities.forEach((s, idx) => {
+        if (!s.primary_field) return;
+        const seriesForField = (progressData.series[s.activity] || {})[s.primary_field];
+        if (!seriesForField || !seriesForField.length) return;
+        const canvasId = `mini-${catKey}-${idx}`;
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        const chart = new Chart(canvas.getContext('2d'), {
+          type: 'line',
+          data: {
+            labels: seriesForField.map(p => p.date.slice(0, 10)),
+            datasets: [{
+              label: s.primary_field,
+              data: seriesForField.map(p => p.value),
+              borderColor: '#2d6cdf',
+              backgroundColor: 'rgba(45,108,223,0.1)',
+              tension: 0.2,
+              pointRadius: 2,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { ticks: { maxTicksLimit: 5, font: { size: 10 } } },
+              y: { ticks: { font: { size: 10 } } }
+            }
+          }
+        });
+        miniCharts[canvasId] = chart;
+      });
     }
   </script>
 </body>
