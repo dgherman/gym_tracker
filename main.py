@@ -478,6 +478,8 @@ def reports_progress_data(
     db: Session = Depends(get_db),
 ):
     user_id = request.session.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Login required")
     rows = crud.user_activity_rows(db, user_id=user_id, start=start, end=end)
     cat_ids = {r["category_id"] for r in rows}
     fields_by_cat = {}

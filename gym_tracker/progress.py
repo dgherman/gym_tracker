@@ -53,7 +53,6 @@ def summarize(rows, fields_by_cat):
         cat_id = entries[0]["category_id"]
         slug = entries[0]["category_slug"]
         fields = fields_by_cat.get(cat_id, [])
-        by_key = {f.key: f for f in fields}
         primary = _primary_field(slug, fields)
 
         # best = max of primary field across entries that have it

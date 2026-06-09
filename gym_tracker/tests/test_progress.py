@@ -10,7 +10,7 @@ class F:
         self.sort_order = sort_order
 
 
-STRENGTH = [F("reps", "integer", "reps", 1), F("weight", "decimal", "lbs", 2)]
+STRENGTH = [F("reps", "integer", None, 1), F("weight", "decimal", "lbs", 2)]
 CARDIO = [F("distance", "decimal", "km", 1), F("duration", "duration", "min", 2), F("pace", "text", None, 3)]
 
 # rows: each {session_date, activity_id, activity_name, category_id, category_slug, category_name, values}
@@ -30,8 +30,8 @@ def test_strength_best_is_max_weight_total_excludes_weight():
     assert s["activity"] == "Bench Press"
     assert s["times"] == 2
     assert s["best"] == "100 lbs"        # max of primary field (weight)
-    assert s["total"] == "16 reps"        # reps summed; weight excluded (NON_SUMMABLE)
-    assert s["latest"] == "8 reps · 100 lbs"  # most recent entry's values
+    assert s["total"] == "16"             # reps summed; weight excluded (NON_SUMMABLE); no unit -> bare
+    assert s["latest"] == "8 · 100 lbs"  # most recent entry's values; reps has no unit
 
 
 def test_cardio_total_sums_distance_and_duration_pace_only_in_latest():
@@ -124,6 +124,22 @@ def test_user_activity_rows_respects_date_range(client_factory):
                                    end=datetime.datetime(2026, 2, 1))
     assert rows == []
     db.close()
+
+
+def test_progress_endpoint_unauthenticated_returns_401():
+    """No session cookie → endpoint must reject with 401, not leak rows."""
+    from starlette.testclient import TestClient
+    import sys, os
+    # Ensure DEV_LOGIN is off so the middleware doesn't auto-pass JSON requests
+    # (the guard in the route itself should fire regardless of middleware).
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+    import main as app_module
+    anon_client = TestClient(app_module.app, raise_server_exceptions=False)
+    r = anon_client.get(
+        "/reports/progress/data?start=2026-01-01T00:00:00&end=2026-02-01T00:00:00",
+        headers={"accept": "application/json"},
+    )
+    assert r.status_code == 401, f"Expected 401, got {r.status_code}: {r.text}"
 
 
 def test_progress_endpoint_shape_and_attribution(couples):
