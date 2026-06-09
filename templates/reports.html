@@ -374,11 +374,6 @@
 
     // ---- Per-category all-charts section ----
 
-    function _slugify(s) {
-      // Produce a safe ASCII key for use in element ids
-      return s.replace(/[^a-zA-Z0-9]/g, '_');
-    }
-
     function _buildByCategorySection(container, summary) {
       // Group summary rows by category, preserving first-seen order.
       const catOrder = [];
@@ -392,26 +387,30 @@
       }
 
       let html = '';
-      for (const cat of catOrder) {
-        const catKey = _slugify(cat);
+      catOrder.forEach((cat, idx) => {
+        const catKey = 'cat' + idx;
         const gridId = `miniGrid-${catKey}`;
         html += `
           <div class="mb-3">
             <div class="d-flex align-items-center gap-2 mb-1">
               <strong>${escapeHtml(cat)}</strong>
               <button class="btn btn-sm btn-outline-secondary py-0 px-2"
-                      onclick="toggleCategoryCharts('${catKey}', '${escapeHtml(cat)}', this)"
+                      onclick="toggleCategoryCharts(this)"
+                      data-cat-key="${catKey}"
+                      data-cat-name="${escapeHtml(cat)}"
                       data-expanded="false">
                 View all charts ▾
               </button>
             </div>
             <div id="${gridId}" class="row g-2" style="display:none"></div>
           </div>`;
-      }
+      });
       container.innerHTML = html;
     }
 
-    function toggleCategoryCharts(catKey, catName, btn) {
+    function toggleCategoryCharts(btn) {
+      const catKey = btn.dataset.catKey;
+      const catName = btn.dataset.catName;
       const expanded = btn.getAttribute('data-expanded') === 'true';
       const grid = document.getElementById(`miniGrid-${catKey}`);
 
@@ -465,7 +464,7 @@
           data: {
             labels: seriesForField.map(p => p.date.slice(0, 10)),
             datasets: [{
-              label: `${escapeHtml(s.primary_field)}`,
+              label: s.primary_field,
               data: seriesForField.map(p => p.value),
               borderColor: '#2d6cdf',
               backgroundColor: 'rgba(45,108,223,0.1)',
