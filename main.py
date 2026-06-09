@@ -127,6 +127,7 @@ class ReportsData(BaseModel):
     cost_by_duration: List[CostByDuration]
     total_minutes_by_duration: List[MinutesByDuration]
     minutes_by_partner: List[MinutesByPartner]
+    sessions_remaining: List[dict] = []
 
     model_config = {"from_attributes": True}
 
@@ -467,6 +468,7 @@ def reports_data(
         "cost_by_duration": [{"duration": d, "cost": float(c)} for d, c in cost_results],
         "total_minutes_by_duration": [{"duration": d, "minutes": int(m)} for d, m in minutes_results],
         "minutes_by_partner": partner_results,
+        "sessions_remaining": crud.get_summary(db, user_id=user_id),
     }
 
 
