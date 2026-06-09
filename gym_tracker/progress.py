@@ -12,10 +12,18 @@ NON_SUMMABLE_KEYS = {"weight"}
 PRIMARY_FIELD = {"strength": "weight", "cardio": "distance", "mobility": "duration"}
 
 
+def _num(value):
+    """Drop trailing .0 on integral floats; pass through ints, fractional floats, and non-numbers."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
 def _fmt(field, value):
     """Format a single value with its unit (no unit -> bare)."""
     unit = getattr(field, "unit", None)
-    return f"{value} {unit}" if unit else f"{value}"
+    v = _num(value)
+    return f"{v} {unit}" if unit else f"{v}"
 
 
 def _numeric_fields(fields):

@@ -107,6 +107,29 @@ def test_same_name_different_activity_id_produces_two_summary_rows():
     assert c_row["total"] == "3 km · 15 min"
 
 
+def test_integral_float_weight_trims_decimal():
+    """Float values that are whole numbers must display without .0 (e.g. 100.0 → '100 lbs')."""
+    rows = [
+        row("2026-01-01", "Squat", 1, "strength", {"reps": 5, "weight": 80.0}),
+        row("2026-02-01", "Squat", 1, "strength", {"reps": 5, "weight": 100.0}),
+    ]
+    out = progress.summarize(rows, {1: STRENGTH})
+    s = out["summary"][0]
+    assert s["best"] == "100 lbs", f"Expected '100 lbs', got {s['best']!r}"
+    assert s["latest"] == "5 · 100 lbs", f"Expected '5 · 100 lbs', got {s['latest']!r}"
+
+
+def test_fractional_float_distance_preserved():
+    """Fractional float values must NOT be truncated (2.5 km stays '2.5 km')."""
+    rows = [
+        row("2026-01-01", "Run", 2, "cardio", {"distance": 2.5, "duration": 20, "pace": "4:00/km"}),
+    ]
+    out = progress.summarize(rows, {2: CARDIO})
+    s = out["summary"][0]
+    assert s["best"] == "2.5 km", f"Expected '2.5 km', got {s['best']!r}"
+    assert "2.5 km" in s["latest"], f"Expected '2.5 km' in latest, got {s['latest']!r}"
+
+
 import datetime
 from gym_tracker import crud, models, activities as activities_mod, schemas
 from gym_tracker.tests.db_test_utils import TestSessionLocal
