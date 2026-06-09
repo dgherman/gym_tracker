@@ -453,6 +453,57 @@ def get_minutes_by_partner(
     return [{"partner": k, "minutes": v} for k, v in by_partner.items()]
 
 
+def _user_slot_in_session(sess, purchase, user_id):
+    """Which person_slot belongs to user_id in this session: 1 if they are the
+    purchase owner, 2 if they are the partner, else None."""
+    if purchase and purchase.logged_by_user_id == user_id:
+        return 1
+    partner_id = (sess.partner_user_id
+                  or (purchase.partner_user_id if purchase else None))
+    if partner_id == user_id:
+        return 2
+    return None
+
+
+def user_activity_rows(db: Session, *, user_id: int, start, end):
+    """Activity rows attributable to user_id within [start, end].
+    Solo sessions (num_people<=1): all rows (null slot). Couples: rows whose
+    person_slot equals the user's slot. Couples null rows are excluded.
+    Returns dicts consumed by gym_tracker.progress.summarize."""
+    visible = _user_session_ids(db, user_id, start, end)
+    sessions = (
+        db.query(models.Session)
+        .filter(models.Session.id.in_(select(visible.c.id)))
+        .all()
+    )
+    rows = []
+    for sess in sessions:
+        purchase = db.get(models.Purchase, sess.purchase_id)
+        num_people = purchase.num_people if purchase else 1
+        my_slot = _user_slot_in_session(sess, purchase, user_id)
+        for sa in sess.activities:
+            if num_people <= 1:
+                pass  # solo: include all
+            elif sa.person_slot == my_slot and my_slot is not None:
+                pass  # couples: my tagged rows
+            else:
+                continue
+            activity = sa.activity or db.get(models.Activity, sa.activity_id)
+            if not activity:
+                continue
+            category = db.get(models.ActivityCategory, activity.category_id)
+            rows.append({
+                "session_date": sess.session_date,
+                "activity_id": activity.id,
+                "activity_name": activity.name,
+                "category_id": category.id if category else 0,
+                "category_slug": category.slug if category else "",
+                "category_name": category.name if category else "(unknown)",
+                "values": sa.values or {},
+            })
+    return rows
+
+
 def get_total_cost(
     db: Session,
     start: datetime,
