@@ -1,5 +1,5 @@
-<!-- Shared date-range control. Host page must call RangeControl.init(onChange);
-     onChange(range) fires with {start, end} ISO strings (or null start = all-time). -->
+<!-- Shared date-range control. Host page must call RangeControl.init(onChange).
+     onChange(range) fires with {start, end} ISO strings. Custom Apply only fires when both inputs are filled. -->
 <div class="btn-group flex-wrap mb-2" id="rangeButtons" role="group">
   <button type="button" class="btn btn-outline-primary active" data-range="current_month">Current Month</button>
   <button type="button" class="btn btn-outline-primary" data-range="last_6_months">Last 6 Months</button>
@@ -7,7 +7,7 @@
   <button type="button" class="btn btn-outline-primary" data-range="current_year">Current Year</button>
   <button type="button" class="btn btn-outline-secondary" data-range="custom">Custom</button>
 </div>
-<div id="customRange" class="d-none align-items-center gap-2 mb-2 flex-wrap">
+<div id="customRange" class="d-none d-flex align-items-center gap-2 mb-2 flex-wrap">
   <span class="text-muted small">From</span>
   <input type="date" id="customStart" class="form-control form-control-sm" style="width:auto">
   <span class="text-muted small">To</span>
