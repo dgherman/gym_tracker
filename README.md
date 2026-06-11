@@ -11,6 +11,14 @@ Simple gym sessions tracker
 
 ## Changelog
 
+### 2026-06-11 – Person-Slot Semantics Fix, History Display, Multi-Field Trend Charts
+
+- **Fixed swapped per-person activity attribution in couples sessions.** The frontend sent `person_slot` relative to the logged-in user (1=me) while the backend stored/displayed it as absolute (1=purchase owner), so activities logged by the purchase *partner* showed under the wrong person. The wire contract is now explicitly requester-relative (1=me, 2=the other person) and the backend translates to/from absolute storage (`activities.user_slot_in_session` / `relative_to_stored_slot` on write; viewer-relative `person_slot` in `SessionActivityRead` via `person_slot_for_viewer` on read). Stored slots remain absolute; progress attribution is unchanged.
+- **Data migration `4093faf32ea1`** (data-only, no schema change) repairs rows written inverted before the fix: swaps slots 1↔2 on couples-session activity rows whose creator is not the purchase owner. Deploy code + `alembic upgrade head` together, once.
+- History: couples sessions now render activities with the same per-category grouping as solo sessions (uppercase category header per person) instead of inline category badges.
+- Reports → Progress: trend chart and per-category mini charts now plot **all numeric fields** of an activity in one graph (e.g. weight + reps), with the category's primary field on the left y-axis and remaining fields on a right y-axis; the single-field selector is gone. Points are aligned per logged entry (new `rid` row id in `/reports/progress/data` series), so multiple entries on the same day stay distinct.
+- New `scripts/restore_prod_backup.sh`: pulls the latest prod S3 dump into the local Docker DB (drop + reload + `alembic upgrade head`).
+
 ### 2026-06-09 – Reports Tabs + Progress (Per-User Activity Stats)
 
 - Reorganized the Reports page into three tabs: **Sessions** (training-minute charts), **Billing** (total cost + sessions-remaining per package), and a new **Progress** tab.

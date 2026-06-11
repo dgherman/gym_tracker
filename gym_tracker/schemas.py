@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 # --------------------
 # Session Schemas
@@ -284,10 +284,15 @@ class SessionActivityRead(BaseModel):
     category_name: str
     values: dict = {}
     notes: str | None = None
-    person_slot: int | None = None
+    # Wire slot is viewer-relative (1=me, 2=the other person); crud annotation
+    # sets person_slot_for_viewer, falling back to the stored absolute column.
+    person_slot: int | None = Field(
+        None,
+        validation_alias=AliasChoices("person_slot_for_viewer", "person_slot"),
+    )
     person_name: str | None = None
     sort_order: int
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 # ---- Admin management schemas ----

@@ -57,6 +57,29 @@ def test_series_orders_numeric_fields_by_date_one_point_per_entry():
     assert "pace" not in series                                   # no text series
 
 
+def test_series_points_carry_row_id_for_same_day_entries():
+    """Multiple entries on the same day must stay distinct points; the rid
+    (DB row id) lets the frontend align fields per entry instead of per day."""
+    rows = [
+        dict(row("2026-06-11", "Trap bar dead lift", 1, "strength",
+                 {"reps": 10, "weight": 100}), row_id=7),
+        dict(row("2026-06-11", "Trap bar dead lift", 1, "strength",
+                 {"reps": 15, "weight": 120}), row_id=8),
+    ]
+    out = progress.summarize(rows, {1: STRENGTH})
+    series = out["series"]["Trap bar dead lift"]
+    assert [p["value"] for p in series["weight"]] == [100, 120]
+    assert [p["rid"] for p in series["weight"]] == [7, 8]
+    assert [p["rid"] for p in series["reps"]] == [7, 8]
+
+
+def test_series_points_rid_none_when_row_id_missing():
+    out = progress.summarize(
+        [row("2026-01-01", "Bench Press", 1, "strength", {"weight": 80})],
+        {1: STRENGTH})
+    assert out["series"]["Bench Press"]["weight"][0]["rid"] is None
+
+
 def test_primary_fallback_first_numeric_when_slug_unknown():
     fields = [F("foo", "integer", None, 1), F("bar", "decimal", "x", 2)]
     rows = [row("2026-01-01", "Thing", 9, "weirdcat", {"foo": 3, "bar": 5})]

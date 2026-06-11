@@ -104,7 +104,10 @@ def summarize(rows, fields_by_cat):
         # acceptable; the summary table still shows both rows correctly via act_key.
         series[name] = {}
         for f in _numeric_fields(fields):
-            pts = [{"date": e["session_date"], "value": e["values"][f.key]}
+            # rid = source row id so the frontend can align fields per entry
+            # (several entries can share one session_date / day).
+            pts = [{"date": e["session_date"], "value": e["values"][f.key],
+                    "rid": e.get("row_id")}
                    for e in entries if e["values"].get(f.key) is not None]
             if pts:
                 series[name][f.key] = pts

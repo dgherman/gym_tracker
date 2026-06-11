@@ -141,10 +141,16 @@ def _person_name_for_slot(db, purchase, sess, slot):
     return "Person B"
 
 
-def _annotate_session_activities(db, sess):
+def _annotate_session_activities(db, sess, for_user_id=None):
     """Attach activity_name, category_id, category_name, person_slot and
-    person_name onto each SessionActivity for SessionActivityRead."""
+    person_name onto each SessionActivity for SessionActivityRead.
+
+    person_name is always the absolute label. person_slot_for_viewer is the
+    wire slot relative to for_user_id (1=viewer, 2=the other person) and is
+    what SessionActivityRead serializes as person_slot; the stored column is
+    never mutated."""
     purchase = db.get(models.Purchase, sess.purchase_id)
+    viewer_slot = activities_mod.user_slot_in_session(sess, purchase, for_user_id)
     for sa in sess.activities:
         activity = sa.activity or db.get(models.Activity, sa.activity_id)
         sa.activity_name = activity.name if activity else "(unknown)"
@@ -152,6 +158,9 @@ def _annotate_session_activities(db, sess):
         sa.category_id = category.id if category else 0
         sa.category_name = category.name if category else "(unknown)"
         sa.person_name = _person_name_for_slot(db, purchase, sess, sa.person_slot)
+        sa.person_slot_for_viewer = activities_mod.relative_to_stored_slot(
+            sa.person_slot, viewer_slot
+        )
 
 
 # --------------------
@@ -319,7 +328,7 @@ def create_session(
 
     db_session.purchase_exhausted = (purchase.sessions_remaining == 0)
     _annotate_session(db_session, purchase, created_by_user_id)
-    _annotate_session_activities(db, db_session)
+    _annotate_session_activities(db, db_session, for_user_id=created_by_user_id)
     return db_session
 
 
@@ -344,7 +353,7 @@ def get_sessions(
         sess.purchase_exhausted = (purchase.sessions_remaining == 0)
         if user_id is not None:
             _annotate_session(sess, purchase, user_id)
-        _annotate_session_activities(db, sess)
+        _annotate_session_activities(db, sess, for_user_id=user_id)
     return sessions
 
 
@@ -456,13 +465,7 @@ def get_minutes_by_partner(
 def _user_slot_in_session(sess, purchase, user_id):
     """Which person_slot belongs to user_id in this session: 1 if they are the
     purchase owner, 2 if they are the partner, else None."""
-    if purchase and purchase.logged_by_user_id == user_id:
-        return 1
-    partner_id = (sess.partner_user_id
-                  or (purchase.partner_user_id if purchase else None))
-    if partner_id == user_id:
-        return 2
-    return None
+    return activities_mod.user_slot_in_session(sess, purchase, user_id)
 
 
 def user_activity_rows(db: Session, *, user_id: int, start, end):
@@ -499,6 +502,7 @@ def user_activity_rows(db: Session, *, user_id: int, start, end):
             category = cat_cache[cid]
             rows.append({
                 "session_date": sess.session_date,
+                "row_id": sa.id,
                 "activity_id": activity.id,
                 "activity_name": activity.name,
                 "category_id": category.id if category else 0,

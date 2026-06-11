@@ -215,6 +215,30 @@ def soft_delete_field(db: Session, field_id: int):
 # Session-activity reconciliation
 # --------------------
 
+def user_slot_in_session(session, purchase, user_id):
+    """Which stored person_slot belongs to user_id in this session: 1 if they
+    are the purchase owner, 2 if they are the (session- or purchase-level)
+    partner, else None."""
+    if user_id is None:
+        return None
+    if purchase and purchase.logged_by_user_id == user_id:
+        return 1
+    partner_id = (session.partner_user_id
+                  or (purchase.partner_user_id if purchase else None))
+    if partner_id == user_id:
+        return 2
+    return None
+
+
+def relative_to_stored_slot(slot, requester_slot):
+    """Translate a wire person_slot (1=requester, 2=the other person) into
+    the stored absolute slot (1=purchase owner, 2=partner). Identity unless
+    the requester is the partner."""
+    if requester_slot == 2 and slot in (1, 2):
+        return 3 - slot
+    return slot
+
+
 def _resolve_person_slot(session, purchase, raw_slot):
     """Normalize/validate a desired person_slot for one activity row.
     Returns the slot to store (None/1/2). Raises ValueError on bad input.
@@ -250,13 +274,17 @@ def reconcile_session_activities(db: Session, session: models.Session, items, *,
     purchase = db.get(models.Purchase, session.purchase_id)
     existing = {sa.id: sa for sa in session.activities}
     seen_ids = set()
+    # Incoming person_slot is requester-relative (1=me, 2=the other person);
+    # storage is absolute (1=purchase owner, 2=partner).
+    requester_slot = user_slot_in_session(session, purchase, created_by_user_id)
 
     for idx, item in enumerate(items):
         activity = db.get(models.Activity, item.activity_id)
         if not activity or not activity.is_active:
             raise ValueError("Selected activity is not available (inactive or unknown)")
         cleaned = validate_activity_values(db, activity, item.values)
-        slot = _resolve_person_slot(session, purchase, item.person_slot)
+        absolute = relative_to_stored_slot(item.person_slot, requester_slot)
+        slot = _resolve_person_slot(session, purchase, absolute)
 
         if item.id is not None:
             sa = existing.get(item.id)

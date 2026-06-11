@@ -103,7 +103,6 @@
           <strong>Trend</strong>
           <div class="d-flex gap-2">
             <select id="trendActivity" class="form-select form-select-sm" style="width:auto"></select>
-            <select id="trendField" class="form-select form-select-sm" style="width:auto"></select>
           </div>
         </div>
         <div style="height:240px">
@@ -126,7 +125,6 @@
       RangeControl.init((range) => { loadReports(range); loadProgress(range); });
 
       document.getElementById('trendActivity').addEventListener('change', e => selectActivity(e.target.value));
-      document.getElementById('trendField').addEventListener('change', drawTrend);
 
       document.getElementById('thCategory').addEventListener('click', () => {
         if (categorySortDir === null || categorySortDir === 'desc') {
@@ -303,7 +301,6 @@
         empty.classList.remove('d-none'); table.classList.add('d-none');
         if (progressChart) { progressChart.destroy(); progressChart = null; }
         document.getElementById('trendActivity').innerHTML = '';
-        document.getElementById('trendField').innerHTML = '';
         byCatSection.innerHTML = '';
         document.getElementById('categoryCaret').textContent = '';
         return;
@@ -345,31 +342,83 @@
 
     function selectActivity(name) {
       document.getElementById('trendActivity').value = name;
-      const fields = Object.keys((progressData.series && progressData.series[name]) || {});
-      const fieldSel = document.getElementById('trendField');
-      fieldSel.innerHTML = fields.map(f => `<option>${escapeHtml(f)}</option>`).join('');
       drawTrend();
+    }
+
+    const FIELD_COLORS = ['#2d6cdf', '#dc3545', '#28a745', '#fd7e14', '#6f42c1'];
+
+    // Chart.js config plotting every numeric field of an activity in one chart.
+    // The category's primary field goes on the left y-axis, all other fields
+    // share the right y-axis (different units/scales). One point per logged
+    // entry: fields are aligned by rid (DB row id), so several entries on the
+    // same day stay distinct. Entries missing a field render as bridged gaps.
+    function buildMultiFieldChartConfig(name, { mini = false } = {}) {
+      const series = (progressData.series || {})[name] || {};
+      const fields = Object.keys(series);
+      if (!fields.length) return null;
+      const summaryRow = (progressData.summary || []).find(s => s.activity === name);
+      const primary = (summaryRow && summaryRow.primary_field) || fields[0];
+
+      const perField = {};
+      const entryDates = new Map();   // entry key -> full date string
+      fields.forEach(f => {
+        const byEntry = {};
+        series[f].forEach(p => {
+          const key = (p.rid != null) ? 'r' + p.rid : 'd' + p.date;
+          byEntry[key] = p.value;
+          if (!entryDates.has(key)) entryDates.set(key, p.date);
+        });
+        perField[f] = byEntry;
+      });
+      const entryKeys = Array.from(entryDates.keys()).sort((a, b) => {
+        const da = entryDates.get(a), db = entryDates.get(b);
+        if (da !== db) return da < db ? -1 : 1;
+        return (parseInt(a.slice(1), 10) || 0) - (parseInt(b.slice(1), 10) || 0);
+      });
+      const labels = entryKeys.map(k => entryDates.get(k).slice(0, 10));
+
+      const datasets = fields.map((f, i) => {
+        const color = FIELD_COLORS[i % FIELD_COLORS.length];
+        return {
+          label: f,
+          data: entryKeys.map(k => perField[f][k] ?? null),
+          borderColor: color,
+          backgroundColor: color + '1a',
+          tension: 0.2,
+          spanGaps: true,
+          pointRadius: mini ? 2 : 3,
+          yAxisID: f === primary ? 'y' : 'y1',
+        };
+      });
+
+      const smallTicks = mini ? { font: { size: 10 } } : {};
+      const scales = {
+        x: { ticks: Object.assign({}, smallTicks, mini ? { maxTicksLimit: 5 } : {}) },
+        y: { position: 'left', ticks: smallTicks },
+      };
+      if (fields.some(f => f !== primary)) {
+        scales.y1 = { position: 'right', grid: { drawOnChartArea: false }, ticks: smallTicks };
+      }
+
+      return {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: !mini } },
+          scales,
+        }
+      };
     }
 
     function drawTrend() {
       const name = document.getElementById('trendActivity').value;
-      const field = document.getElementById('trendField').value;
-      const pts = (((progressData.series || {})[name] || {})[field]) || [];
       const ctx = document.getElementById('progressChart').getContext('2d');
-      if (progressChart) progressChart.destroy();
-      progressChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels: pts.map(p => p.date.slice(0, 10)),
-          datasets: [{
-            label: `${escapeHtml(name)} · ${escapeHtml(field)}`,
-            data: pts.map(p => p.value),
-            borderColor: '#2d6cdf',
-            tension: 0.2
-          }]
-        },
-        options: { responsive: true, maintainAspectRatio: false }
-      });
+      if (progressChart) { progressChart.destroy(); progressChart = null; }
+      const config = buildMultiFieldChartConfig(name);
+      if (!config) return;
+      progressChart = new Chart(ctx, config);
     }
 
     // ---- Per-category all-charts section ----
@@ -435,9 +484,8 @@
       let innerHtml = '';
       activities.forEach((s, idx) => {
         const canvasId = `mini-${catKey}-${idx}`;
-        const hasSeries = s.primary_field && progressData.series[s.activity] &&
-                          progressData.series[s.activity][s.primary_field] &&
-                          progressData.series[s.activity][s.primary_field].length > 0;
+        const actSeries = progressData.series[s.activity] || {};
+        const hasSeries = Object.keys(actSeries).some(f => actSeries[f].length > 0);
         innerHtml += `
           <div class="col-12 col-md-6 col-lg-4">
             <div class="border rounded p-2">
@@ -453,36 +501,12 @@
 
       // Now create Chart.js instances for canvases (grid is already visible)
       activities.forEach((s, idx) => {
-        if (!s.primary_field) return;
-        const seriesForField = (progressData.series[s.activity] || {})[s.primary_field];
-        if (!seriesForField || !seriesForField.length) return;
         const canvasId = `mini-${catKey}-${idx}`;
         const canvas = document.getElementById(canvasId);
         if (!canvas) return;
-        const chart = new Chart(canvas.getContext('2d'), {
-          type: 'line',
-          data: {
-            labels: seriesForField.map(p => p.date.slice(0, 10)),
-            datasets: [{
-              label: s.primary_field,
-              data: seriesForField.map(p => p.value),
-              borderColor: '#2d6cdf',
-              backgroundColor: 'rgba(45,108,223,0.1)',
-              tension: 0.2,
-              pointRadius: 2,
-            }]
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: {
-              x: { ticks: { maxTicksLimit: 5, font: { size: 10 } } },
-              y: { ticks: { font: { size: 10 } } }
-            }
-          }
-        });
-        miniCharts[canvasId] = chart;
+        const config = buildMultiFieldChartConfig(s.activity, { mini: true });
+        if (!config) return;
+        miniCharts[canvasId] = new Chart(canvas.getContext('2d'), config);
       });
     }
   </script>
