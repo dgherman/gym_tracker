@@ -469,7 +469,8 @@ def _user_slot_in_session(sess, purchase, user_id):
 
 
 def user_activity_rows(db: Session, *, user_id: int, start, end):
-    """Activity rows attributable to user_id within [start, end].
+    """Activity rows attributable to user_id within [start, end], including
+    standalone progress entries (no session).
     Solo sessions (num_people<=1): all rows (null slot). Couples: rows whose
     person_slot equals the user's slot. Couples null rows are excluded.
     Returns dicts consumed by gym_tracker.progress.summarize."""
@@ -510,6 +511,35 @@ def user_activity_rows(db: Session, *, user_id: int, start, end):
                 "category_name": category.name if category else "(unknown)",
                 "values": sa.values or {},
             })
+    # Standalone progress entries (no session) merge into the same row stream.
+    # row_id is "p<id>" — string namespace can't collide with integer sa.id.
+    entries = (
+        db.query(models.ProgressEntry)
+        .filter(
+            models.ProgressEntry.user_id == user_id,
+            models.ProgressEntry.entry_date >= start,
+            models.ProgressEntry.entry_date <= end,
+        )
+        .all()
+    )
+    for pe in entries:
+        activity = pe.activity
+        if not activity:
+            continue
+        cid = activity.category_id
+        if cid not in cat_cache:
+            cat_cache[cid] = db.get(models.ActivityCategory, cid)
+        category = cat_cache[cid]
+        rows.append({
+            "session_date": pe.entry_date,
+            "row_id": f"p{pe.id}",
+            "activity_id": activity.id,
+            "activity_name": activity.name,
+            "category_id": category.id if category else 0,
+            "category_slug": category.slug if category else "",
+            "category_name": category.name if category else "(unknown)",
+            "values": pe.values or {},
+        })
     return rows
 
 

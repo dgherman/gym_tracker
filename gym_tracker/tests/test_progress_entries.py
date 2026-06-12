@@ -215,3 +215,70 @@ def test_update_activity_revalidates_existing_values(couples):
     assert out["activity_name"] == "Bike"
     assert out["values"] == {"distance": 12.5}
     db.close()
+
+
+# ---------------------------------------------------------------
+# user_activity_rows merge
+# ---------------------------------------------------------------
+
+from gym_tracker import crud
+
+
+def test_user_activity_rows_includes_standalone_entries(couples):
+    db = TestSessionLocal()
+    owner_id = couples._ids["owner"]
+    act = couples._ids["act"]
+    pe = _seed_entry(db, user_id=owner_id, activity_id=act,
+                     date=datetime(2026, 5, 10), reps=12)
+    rows = crud.user_activity_rows(
+        db, user_id=owner_id,
+        start=datetime(2026, 5, 1), end=datetime(2026, 5, 31),
+    )
+    standalone = [r for r in rows if r["row_id"] == f"p{pe.id}"]
+    assert len(standalone) == 1
+    r = standalone[0]
+    assert r["session_date"] == datetime(2026, 5, 10)
+    assert r["activity_name"] == "Bench Press"
+    assert r["category_slug"] == "strength"
+    assert r["values"] == {"reps": 12}
+    db.close()
+
+
+def test_user_activity_rows_excludes_other_users_and_out_of_range(couples):
+    db = TestSessionLocal()
+    owner_id = couples._ids["owner"]
+    act = couples._ids["act"]
+    _seed_entry(db, user_id=couples._ids["partner"], activity_id=act,
+                date=datetime(2026, 5, 10), reps=1)          # other user
+    _seed_entry(db, user_id=owner_id, activity_id=act,
+                date=datetime(2026, 7, 1), reps=2)            # out of range
+    inside = _seed_entry(db, user_id=owner_id, activity_id=act,
+                         date=datetime(2026, 5, 15), reps=3)  # in range
+    rows = crud.user_activity_rows(
+        db, user_id=owner_id,
+        start=datetime(2026, 5, 1), end=datetime(2026, 5, 31),
+    )
+    standalone_ids = [r["row_id"] for r in rows if str(r["row_id"]).startswith("p")]
+    assert standalone_ids == [f"p{inside.id}"]
+    db.close()
+
+
+def test_standalone_rows_flow_through_summarize(couples):
+    from gym_tracker import progress as progress_mod
+    db = TestSessionLocal()
+    owner_id = couples._ids["owner"]
+    act = couples._ids["act"]
+    _seed_entry(db, user_id=owner_id, activity_id=act,
+                date=datetime(2026, 5, 10), reps=12)
+    rows = crud.user_activity_rows(
+        db, user_id=owner_id,
+        start=datetime(2026, 5, 1), end=datetime(2026, 5, 31),
+    )
+    fields = (
+        db.query(models.CategoryField)
+        .filter(models.CategoryField.category_id == couples._ids["cat"])
+        .all()
+    )
+    out = progress_mod.summarize(rows, {couples._ids["cat"]: fields})
+    assert any(s["activity"] == "Bench Press" for s in out["summary"])
+    db.close()
