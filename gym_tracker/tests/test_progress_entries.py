@@ -282,3 +282,120 @@ def test_standalone_rows_flow_through_summarize(couples):
     out = progress_mod.summarize(rows, {couples._ids["cat"]: fields})
     assert any(s["activity"] == "Bench Press" for s in out["summary"])
     db.close()
+
+
+# ---------------------------------------------------------------
+# API integration tests (session-cookie auth via /dev/login)
+# ---------------------------------------------------------------
+
+import os
+
+
+def _login(c, email):
+    os.environ["DEV_LOGIN_EMAIL"] = email
+    r = c.get("/dev/login", follow_redirects=False)
+    assert r.status_code in (302, 307)
+
+
+def test_api_create_list_update_delete_own(couples):
+    c = couples
+    _login(c, "owner@x.com")
+    r = c.post("/api/progress-entries", json={
+        "activity_id": c._ids["act"],
+        "entry_date": "2026-05-10",
+        "values": {"reps": "12"},
+        "notes": "home gym",
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["activity_name"] == "Bench Press"
+    assert body["values"] == {"reps": 12}
+    entry_id = body["id"]
+
+    r = c.get("/api/progress-entries")
+    assert r.status_code == 200
+    assert [e["id"] for e in r.json()] == [entry_id]
+
+    r = c.put(f"/api/progress-entries/{entry_id}", json={"values": {"reps": "15"}})
+    assert r.status_code == 200
+    assert r.json()["values"] == {"reps": 15}
+
+    r = c.delete(f"/api/progress-entries/{entry_id}")
+    assert r.status_code == 200
+    assert c.get("/api/progress-entries").json() == []
+
+
+def test_api_unauthenticated_401(couples):
+    r = couples.post("/api/progress-entries", json={
+        "activity_id": couples._ids["act"],
+        "entry_date": "2026-05-10",
+        "values": {"reps": "5"},
+    }, headers={"accept": "application/json"})
+    assert r.status_code == 401
+
+
+def test_api_client_targeting_other_user_403(couples):
+    c = couples
+    _login(c, "owner@x.com")
+    r = c.post("/api/progress-entries", json={
+        "activity_id": c._ids["act"],
+        "entry_date": "2026-05-10",
+        "values": {"reps": "5"},
+        "user_id": c._ids["partner"],
+    })
+    assert r.status_code == 403
+    r = c.get(f"/api/progress-entries?user_id={c._ids['partner']}")
+    assert r.status_code == 403
+
+
+def test_api_trainer_can_target_other_user(couples):
+    c = couples
+    db = TestSessionLocal()
+    u = db.get(models.User, c._ids["outsider"])
+    u.role = "trainer"
+    db.commit(); db.close()
+
+    _login(c, "out@x.com")
+    r = c.post("/api/progress-entries", json={
+        "activity_id": c._ids["act"],
+        "entry_date": "2026-05-10",
+        "values": {"reps": "8"},
+        "user_id": c._ids["owner"],
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["user_id"] == c._ids["owner"]
+
+    r = c.get(f"/api/progress-entries?user_id={c._ids['owner']}")
+    assert r.status_code == 200
+    assert len(r.json()) == 1
+
+
+def test_api_validation_400_and_missing_404(couples):
+    c = couples
+    _login(c, "owner@x.com")
+    r = c.post("/api/progress-entries", json={
+        "activity_id": c._ids["act"],
+        "entry_date": "2026-05-10",
+        "values": {},  # required "reps" missing
+    })
+    assert r.status_code == 400
+    r = c.put("/api/progress-entries/99999", json={"notes": "x"})
+    assert r.status_code == 404
+    r = c.delete("/api/progress-entries/99999")
+    assert r.status_code == 404
+
+
+def test_api_users_list_role_gated(couples):
+    c = couples
+    _login(c, "owner@x.com")  # role=client
+    assert c.get("/api/users", headers={"accept": "application/json"}).status_code == 403
+
+    db = TestSessionLocal()
+    u = db.get(models.User, c._ids["outsider"])
+    u.role = "trainer"
+    db.commit(); db.close()
+    _login(c, "out@x.com")
+    r = c.get("/api/users", headers={"accept": "application/json"})
+    assert r.status_code == 200
+    emails = {u["email"] for u in r.json()}
+    assert {"owner@x.com", "partner@x.com", "out@x.com"} <= emails
