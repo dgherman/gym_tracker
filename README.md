@@ -11,6 +11,10 @@ Simple gym sessions tracker
 
 ## Changelog
 
+### 2026-06-12 – Standalone Progress Entries
+
+- **Standalone progress entries**: record activity progress for any past date without a session (Reports → Progress → "+ Add progress"). Admins and trainers can log entries on behalf of other users. New `progress_entries` table (migration `pe01standalone`); entries merge seamlessly into Progress charts.
+
 ### 2026-06-11 – Person-Slot Semantics Fix, History Display, Multi-Field Trend Charts
 
 - **Fixed swapped per-person activity attribution in couples sessions.** The frontend sent `person_slot` relative to the logged-in user (1=me) while the backend stored/displayed it as absolute (1=purchase owner), so activities logged by the purchase *partner* showed under the wrong person. The wire contract is now explicitly requester-relative (1=me, 2=the other person) and the backend translates to/from absolute storage (`activities.user_slot_in_session` / `relative_to_stored_slot` on write; viewer-relative `person_slot` in `SessionActivityRead` via `person_slot_for_viewer` on read). Stored slots remain absolute; progress attribution is unchanged.
