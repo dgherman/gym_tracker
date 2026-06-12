@@ -83,6 +83,35 @@
 
     <!-- Progress tab -->
     <div class="tab-pane fade" id="tab-progress" role="tabpanel">
+      <!-- Standalone progress entry (no session) -->
+      <div class="border rounded mb-3">
+        <button type="button" class="btn btn-link text-decoration-none w-100 text-start fw-bold"
+                data-bs-toggle="collapse" data-bs-target="#addProgressBody">
+          + Add progress <span class="text-muted fw-normal">(without a session)</span>
+        </button>
+        <div class="collapse" id="addProgressBody">
+          <div class="p-2">
+            <div class="row g-2 mb-2">
+              <div class="col-auto">
+                <label for="peDate" class="form-label mb-0 small">Date</label>
+                <input type="date" id="peDate" class="form-control form-control-sm">
+              </div>
+              {% if current_user and current_user.role in ("admin", "trainer") %}
+              <div class="col-auto">
+                <label for="peUser" class="form-label mb-0 small">For user</label>
+                <select id="peUser" class="form-select form-select-sm"></select>
+              </div>
+              {% endif %}
+            </div>
+            {% include "_activity_section.html" %}
+            <div class="d-flex align-items-center gap-2 mt-2">
+              <button type="button" id="peSaveBtn" class="btn btn-sm btn-success">Save progress</button>
+              <span id="peStatus" class="small text-muted"></span>
+            </div>
+            <div id="peEntries" class="mt-3"></div>
+          </div>
+        </div>
+      </div>
       <div id="progressEmpty" class="text-muted d-none">No activities logged in this range.</div>
       <div class="table-responsive">
         <table class="table table-sm align-middle" id="progressTable">
@@ -123,6 +152,7 @@
     window.addEventListener('DOMContentLoaded', () => {
       initCharts();
       RangeControl.init((range) => { loadReports(range); loadProgress(range); });
+      initProgressEntryPanel();
 
       document.getElementById('trendActivity').addEventListener('change', e => selectActivity(e.target.value));
 
@@ -508,6 +538,139 @@
         if (!config) return;
         miniCharts[canvasId] = new Chart(canvas.getContext('2d'), config);
       });
+    }
+
+    // ---- Standalone progress entries ----
+    let peEditingId = null;  // entry id being edited, or null
+
+    function peTargetUserId() {
+      const sel = document.getElementById('peUser');
+      return sel && sel.value ? parseInt(sel.value) : null;
+    }
+
+    async function initProgressEntryPanel() {
+      const dateInput = document.getElementById('peDate');
+      dateInput.value = new Date().toISOString().slice(0, 10);
+      dateInput.max = dateInput.value;  // future dates make no sense for "retroactive"
+
+      await ActivitySection.load();
+      ActivitySection.init();
+      ActivitySection.setPeople({ numPeople: 1 });
+
+      const userSel = document.getElementById('peUser');
+      if (userSel) {
+        const res = await fetch('/api/users', { headers: { accept: 'application/json' } });
+        if (res.ok) {
+          const users = await res.json();
+          userSel.innerHTML = users.map(u =>
+            `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('');
+        }
+        userSel.addEventListener('change', loadEntriesList);
+      }
+
+      document.getElementById('peSaveBtn').addEventListener('click', saveProgressEntries);
+      loadEntriesList();
+    }
+
+    async function saveProgressEntries() {
+      const status = document.getElementById('peStatus');
+      const date = document.getElementById('peDate').value;
+      if (!date) { alert('Pick a date'); return; }
+      const rows = ActivitySection.collect();
+      if (!rows.length) { alert('Add at least one activity'); return; }
+
+      const userId = peTargetUserId();
+      status.textContent = 'Saving…';
+      try {
+        if (peEditingId !== null) {
+          const r = rows[0];
+          const res = await fetch(`/api/progress-entries/${peEditingId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', accept: 'application/json' },
+            body: JSON.stringify({ activity_id: r.activity_id, entry_date: date,
+                                   values: r.values, notes: r.notes }),
+          });
+          if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+          peEditingId = null;
+        } else {
+          for (const r of rows) {
+            const body = { activity_id: r.activity_id, entry_date: date,
+                           values: r.values, notes: r.notes };
+            if (userId !== null) body.user_id = userId;
+            const res = await fetch('/api/progress-entries', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', accept: 'application/json' },
+              body: JSON.stringify(body),
+            });
+            if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+          }
+        }
+        ActivitySection.reset();
+        status.textContent = 'Saved.';
+        setTimeout(() => { status.textContent = ''; }, 2000);
+        loadEntriesList();
+        loadProgress(RangeControl.getRange());
+      } catch (e) {
+        status.textContent = '';
+        alert('Save failed: ' + e.message);
+      }
+    }
+
+    async function loadEntriesList() {
+      const wrap = document.getElementById('peEntries');
+      if (!wrap) return;
+      const userId = peTargetUserId();
+      const url = '/api/progress-entries' + (userId !== null ? `?user_id=${userId}` : '');
+      const res = await fetch(url, { headers: { accept: 'application/json' } });
+      if (!res.ok) { wrap.innerHTML = ''; return; }
+      const entries = await res.json();
+      if (!entries.length) { wrap.innerHTML = ''; return; }
+      const fmap = ActivitySection.fieldMap();
+      wrap.innerHTML = '<div class="fw-bold small">Recorded entries</div>' +
+        '<ul class="list-group">' + entries.map(e => {
+          const parts = Object.entries(e.values).map(([k, v]) => {
+            const f = fmap[e.category_id + ':' + k];
+            const label = f ? f.label : k;
+            const disp = f ? ActivitySection.fmtValue(e.category_name, f, v) : v;
+            return `${escapeHtml(label)}: ${escapeHtml(String(disp))}`;
+          }).join(' · ');
+          const note = e.notes ? ` <span class="text-muted">· ${escapeHtml(e.notes)}</span>` : '';
+          return `<li class="list-group-item d-flex justify-content-between align-items-center py-1 small">
+            <span><strong>${escapeHtml(e.activity_name)}</strong>
+              <span class="text-muted">· ${e.entry_date.slice(0, 10)}</span> ${parts}${note}</span>
+            <span class="d-flex gap-2">
+              <button type="button" class="btn btn-sm btn-link p-0" onclick="editEntry(${e.id})">Edit</button>
+              <button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="deleteEntry(${e.id})">✕</button>
+            </span></li>`;
+        }).join('') + '</ul>';
+      wrap.dataset.entries = JSON.stringify(entries);
+    }
+
+    function editEntry(id) {
+      const entries = JSON.parse(document.getElementById('peEntries').dataset.entries || '[]');
+      const e = entries.find(x => x.id === id);
+      if (!e) return;
+      peEditingId = id;
+      document.getElementById('peDate').value = e.entry_date.slice(0, 10);
+      ActivitySection.prefill([{
+        id: e.id, category_id: e.category_id, activity_id: e.activity_id,
+        activity_name: e.activity_name, category_name: e.category_name,
+        values: e.values, notes: e.notes, person_slot: null,
+      }]);
+      // Open the collapse if closed
+      const body = document.getElementById('addProgressBody');
+      if (!body.classList.contains('show')) new bootstrap.Collapse(body).show();
+    }
+
+    async function deleteEntry(id) {
+      if (!confirm('Delete this entry?')) return;
+      const res = await fetch(`/api/progress-entries/${id}`, {
+        method: 'DELETE', headers: { accept: 'application/json' },
+      });
+      if (!res.ok) { alert('Delete failed'); return; }
+      if (peEditingId === id) { peEditingId = null; ActivitySection.reset(); }
+      loadEntriesList();
+      loadProgress(RangeControl.getRange());
     }
   </script>
 </body>
