@@ -86,14 +86,22 @@ def update_entry(db: Session, *, actor: models.User, entry_id: int,
                  data: schemas.ProgressEntryUpdate) -> dict:
     pe = _get_owned(db, actor=actor, entry_id=entry_id)
     patch = data.model_dump(exclude_unset=True)
+    new_activity_id = pe.activity_id
+    activity_changed = False
     if "activity_id" in patch:
         activity = db.get(models.Activity, patch["activity_id"])
         if not activity:
             raise LookupError("Activity not found")
-        pe.activity_id = activity.id
-    if "values" in patch:
-        activity = db.get(models.Activity, pe.activity_id)
-        pe.values = validate_activity_values(db, activity, patch["values"])
+        activity_changed = activity.id != pe.activity_id
+        new_activity_id = activity.id
+    if "values" in patch or activity_changed:
+        activity = db.get(models.Activity, new_activity_id)
+        # Validate BEFORE mutating pe so a ValueError leaves the row unchanged
+        new_values = validate_activity_values(db, activity, patch.get("values", pe.values))
+        pe.activity_id = new_activity_id
+        pe.values = new_values
+    elif "activity_id" in patch:
+        pe.activity_id = new_activity_id
     if "entry_date" in patch:
         pe.entry_date = patch["entry_date"]
     if "notes" in patch:

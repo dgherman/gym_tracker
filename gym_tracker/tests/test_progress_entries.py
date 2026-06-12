@@ -188,3 +188,30 @@ def test_update_missing_entry_raises_lookup(couples):
         progress_entries.update_entry(db, actor=owner, entry_id=99999,
                                       data=schemas.ProgressEntryUpdate(notes="x"))
     db.close()
+
+
+def test_update_activity_revalidates_existing_values(couples):
+    db = TestSessionLocal()
+    owner = db.get(models.User, couples._ids["owner"])
+    # Second category with a different required field
+    cat2 = models.ActivityCategory(name="Cardio", slug="cardio", sort_order=2)
+    db.add(cat2); db.flush()
+    db.add(models.CategoryField(category_id=cat2.id, key="distance", label="Distance",
+                                field_type="decimal", is_required=True, sort_order=1))
+    act2 = models.Activity(category_id=cat2.id, name="Bike")
+    db.add(act2); db.commit()
+
+    pe = _seed_entry(db, user_id=owner.id, activity_id=couples._ids["act"],
+                     date=datetime(2026, 5, 1), reps=5)
+    # Switching activity without new values: old {"reps": 5} lacks required "distance"
+    with pytest.raises(ValueError):
+        progress_entries.update_entry(db, actor=owner, entry_id=pe.id,
+                                      data=schemas.ProgressEntryUpdate(activity_id=act2.id))
+    # Switching with matching values succeeds
+    out = progress_entries.update_entry(
+        db, actor=owner, entry_id=pe.id,
+        data=schemas.ProgressEntryUpdate(activity_id=act2.id, values={"distance": "12.5"}),
+    )
+    assert out["activity_name"] == "Bike"
+    assert out["values"] == {"distance": 12.5}
+    db.close()
