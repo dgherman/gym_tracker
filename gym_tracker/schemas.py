@@ -360,5 +360,38 @@ class ActivityUpdate(BaseModel):
         return v.strip() if v else v
 
 
+# --------------------
+# Standalone Progress Entry Schemas
+# --------------------
+
+class ProgressEntryCreate(BaseModel):
+    activity_id: int
+    entry_date: datetime  # accepts "YYYY-MM-DD"; parsed to midnight
+    values: dict = {}
+    notes: str | None = None
+    user_id: int | None = None  # None = current user; others require admin/trainer role
+
+
+class ProgressEntryUpdate(BaseModel):
+    activity_id: int | None = None
+    entry_date: datetime | None = None
+    values: dict | None = None
+    notes: str | None = None
+
+
+class ProgressEntryRead(BaseModel):
+    id: int
+    user_id: int
+    activity_id: int
+    activity_name: str
+    category_id: int
+    category_name: str
+    entry_date: datetime
+    values: dict = {}
+    notes: str | None = None
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+
 SessionCreate.model_rebuild()
 Session.model_rebuild()
