@@ -207,3 +207,23 @@ class SessionActivity(Base):
 
     session = relationship("Session", back_populates="activities")
     activity = relationship("Activity")
+
+
+class ProgressEntry(Base):
+    """Standalone progress entry — activity values recorded for a date without a session.
+    Never consumes package sessions. user_id = whose progress; created_by_user_id = who
+    typed it (differs when an admin/trainer logs on someone's behalf)."""
+    __tablename__ = "progress_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    activity_id = Column(Integer, ForeignKey("activities.id"), nullable=False)
+    # DateTime (midnight), not Date: must sort against Session.session_date in progress rows
+    entry_date = Column(DateTime, nullable=False, index=True)
+    values = Column(JSON, nullable=False, default=dict)
+    notes = Column(Text, nullable=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    user = relationship("User", foreign_keys=[user_id])
+    activity = relationship("Activity")
