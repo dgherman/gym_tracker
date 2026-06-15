@@ -13,7 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from gym_tracker import activities as activities_mod
-from gym_tracker import crud, models, progress, schemas
+from gym_tracker import crud, models, progress, progress_entries, schemas
 from gym_tracker.auth import router as auth_router
 from gym_tracker.config import get_settings
 from gym_tracker.database import SessionLocal, engine
@@ -575,6 +575,88 @@ def create_activity(
         return activities_mod.create_activity(db, activity_in, created_by_user_id=user_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# -------------------------------------------------------------
+# Standalone Progress Entry API endpoints
+# -------------------------------------------------------------
+
+def _require_user(request: Request, db: Session) -> models.User:
+    user = get_current_user(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Login required")
+    return user
+
+
+def _run_entry_op(fn):
+    """Map progress_entries exceptions to HTTP errors."""
+    try:
+        return fn()
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/progress-entries", response_model=schemas.ProgressEntryRead)
+def create_progress_entry(
+    entry_in: schemas.ProgressEntryCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = _require_user(request, db)
+    return _run_entry_op(lambda: progress_entries.create_entry(db, actor=user, data=entry_in))
+
+
+@app.get("/api/progress-entries", response_model=List[schemas.ProgressEntryRead])
+def list_progress_entries(
+    request: Request,
+    user_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(request, db)
+    target = user_id if user_id is not None else user.id
+    return _run_entry_op(lambda: progress_entries.list_entries(db, actor=user, user_id=target))
+
+
+@app.put("/api/progress-entries/{entry_id}", response_model=schemas.ProgressEntryRead)
+def update_progress_entry(
+    entry_id: int,
+    entry_update: schemas.ProgressEntryUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = _require_user(request, db)
+    return _run_entry_op(lambda: progress_entries.update_entry(
+        db, actor=user, entry_id=entry_id, data=entry_update))
+
+
+@app.delete("/api/progress-entries/{entry_id}")
+def delete_progress_entry(
+    entry_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = _require_user(request, db)
+    _run_entry_op(lambda: progress_entries.delete_entry(db, actor=user, entry_id=entry_id))
+    return {"ok": True}
+
+
+@app.get("/api/users")
+def list_users(request: Request, db: Session = Depends(get_db)):
+    """Minimal user list for the admin/trainer 'log for someone' selector."""
+    user = _require_user(request, db)
+    if user.role not in progress_entries.PRIVILEGED_ROLES:
+        raise HTTPException(status_code=403, detail="Admin or trainer access required")
+    users = (
+        db.query(models.User)
+        .filter(models.User.is_active == True)
+        .order_by(models.User.full_name, models.User.email)
+        .all()
+    )
+    return [{"id": u.id, "name": u.full_name or u.email, "email": u.email} for u in users]
 
 
 # -------------------------------------------------------------
