@@ -117,7 +117,9 @@
         <table class="table table-sm align-middle" id="progressTable">
           <thead>
             <tr>
-              <th>Activity</th>
+              <th id="thActivity" style="cursor:pointer;user-select:none">
+                Activity <span id="activityCaret"></span>
+              </th>
               <th id="thCategory" style="cursor:pointer;user-select:none">
                 Category <span id="categoryCaret"></span>
               </th>
@@ -156,14 +158,8 @@
 
       document.getElementById('trendActivity').addEventListener('change', e => selectActivity(e.target.value));
 
-      document.getElementById('thCategory').addEventListener('click', () => {
-        if (categorySortDir === null || categorySortDir === 'desc') {
-          categorySortDir = 'asc';
-        } else {
-          categorySortDir = 'desc';
-        }
-        renderProgress();
-      });
+      document.getElementById('thActivity').addEventListener('click', () => _toggleProgressSort('activity'));
+      document.getElementById('thCategory').addEventListener('click', () => _toggleProgressSort('category'));
 
       document.querySelector('[data-bs-target="#tab-progress"]')
         .addEventListener('shown.bs.tab', () => { if (progressChart) progressChart.resize(); });
@@ -284,9 +280,20 @@
     let progressData = { summary: [], series: {} };
     let progressChart = null;
 
-    // Category sort state: null = backend order (default), 'asc', or 'desc'.
-    // Default is 'asc' so the caret is visible on first render.
-    let categorySortDir = 'asc';
+    // Progress table sort: one active column at a time. column is 'activity' or
+    // 'category'; dir is 'asc' or 'desc'. Default 'category'/'asc' (prior behavior).
+    let progressSort = { column: 'category', dir: 'asc' };
+
+    // Clicking a sortable header makes it the active column (asc), or flips
+    // direction if it's already active.
+    function _toggleProgressSort(column) {
+      if (progressSort.column === column) {
+        progressSort.dir = progressSort.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        progressSort = { column, dir: 'asc' };
+      }
+      renderProgress();
+    }
 
     // Registry of mini Chart.js instances keyed by canvas id, for leak-free lifecycle.
     // Format: { canvasId: Chart instance }
@@ -333,6 +340,7 @@
         document.getElementById('trendActivity').innerHTML = '';
         byCatSection.innerHTML = '';
         document.getElementById('categoryCaret').textContent = '';
+        document.getElementById('activityCaret').textContent = '';
         return;
       }
 
@@ -340,14 +348,13 @@
 
       // Build a sorted copy for rendering; never mutate progressData.summary in-place.
       let displayRows = progressData.summary.slice();
-      if (categorySortDir === 'asc') {
-        displayRows.sort((a, b) => a.category.localeCompare(b.category));
-      } else if (categorySortDir === 'desc') {
-        displayRows.sort((a, b) => b.category.localeCompare(a.category));
-      }
-      // Update caret indicator
-      const caretEl = document.getElementById('categoryCaret');
-      caretEl.textContent = categorySortDir === 'asc' ? '▲' : (categorySortDir === 'desc' ? '▼' : '');
+      const dir = progressSort.dir === 'desc' ? -1 : 1;
+      const key = progressSort.column;  // 'activity' or 'category'
+      displayRows.sort((a, b) => dir * String(a[key]).localeCompare(String(b[key])));
+      // Caret shows only on the active column.
+      const arrow = progressSort.dir === 'asc' ? '▲' : '▼';
+      document.getElementById('activityCaret').textContent = progressSort.column === 'activity' ? arrow : '';
+      document.getElementById('categoryCaret').textContent = progressSort.column === 'category' ? arrow : '';
 
       tbody.innerHTML = displayRows.map(s => `
         <tr style="cursor:pointer" data-activity="${escapeHtml(s.activity)}">
