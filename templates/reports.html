@@ -99,7 +99,7 @@
               {% if current_user and current_user.role in ("admin", "trainer") %}
               <div class="col-auto">
                 <label for="peUser" class="form-label mb-0 small">For user</label>
-                <select id="peUser" class="form-select form-select-sm"></select>
+                <select id="peUser" class="form-select form-select-sm" data-current-user-id="{{ current_user.id }}"></select>
               </div>
               {% endif %}
             </div>
@@ -559,11 +559,14 @@
 
       const userSel = document.getElementById('peUser');
       if (userSel) {
+        const meId = parseInt(userSel.dataset.currentUserId);
         const res = await fetch('/api/users', { headers: { accept: 'application/json' } });
         if (res.ok) {
           const users = await res.json();
           userSel.innerHTML = users.map(u =>
-            `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('');
+            `<option value="${u.id}">${escapeHtml(u.name)}${u.id === meId ? ' (me)' : ''}</option>`).join('');
+          // Default the target to the logged-in user, not the first name alphabetically.
+          if (!Number.isNaN(meId)) userSel.value = String(meId);
         }
         userSel.addEventListener('change', loadEntriesList);
       }
