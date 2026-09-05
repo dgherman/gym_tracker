@@ -75,13 +75,15 @@ def user_can_edit_session(session, purchase, user_id) -> bool:
 
 
 def _resolve_partner(db: Session, partner_email: Optional[str]) -> Optional[int]:
-    """Look up a user by email. Returns user ID or None."""
-    if not partner_email:
+    """Look up a user by email (case-insensitive). Returns user ID or None.
+
+    Fails closed: if the email matches more than one row (dirty data), do not
+    link to an arbitrary one -- return None so the caller skips partner linking.
+    """
+    user, ambiguous = find_user_by_email_ci(db, partner_email)
+    if ambiguous or user is None:
         return None
-    user = db.query(models.User).filter(
-        models.User.email == partner_email.lower().strip()
-    ).first()
-    return user.id if user else None
+    return user.id
 
 
 def _annotate_purchases(db, purchases, user_id: int):

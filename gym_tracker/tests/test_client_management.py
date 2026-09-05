@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 import main
 from gym_tracker.config import get_settings
 from gym_tracker.database import Base
-from gym_tracker import models
+from gym_tracker import crud, models
 
 test_engine = create_engine(
     "sqlite:///:memory:",
@@ -629,3 +629,31 @@ def test_build_confirm_url_request_fallback_no_double_slash(monkeypatch):
     req = SimpleNamespace(base_url="http://testserver/")
     url = main.build_confirm_url(req, "TOK")
     assert url == "http://testserver/invite/confirm?token=TOK"
+
+
+# ---------------------------------------------------------------------------
+# Review R2-2 — partner linking must be case-insensitive and fail closed
+# ---------------------------------------------------------------------------
+
+def test_resolve_partner_ci_match_links(db_session):
+    db_session.add(models.User(email="Mixed@X.com", role="client", status="active",
+                               google_sub="pm1"))
+    db_session.commit()
+    uid = db_session.query(models.User).filter_by(email="Mixed@X.com").one().id
+    assert crud._resolve_partner(db_session, "mixed@x.com") == uid
+
+
+def test_resolve_partner_no_match_returns_none(db_session):
+    assert crud._resolve_partner(db_session, "nobody@x.com") is None
+    assert crud._resolve_partner(db_session, "") is None
+    assert crud._resolve_partner(db_session, None) is None
+
+
+def test_resolve_partner_ambiguous_does_not_link(db_session):
+    db_session.add_all([
+        models.User(email="Dirty@X.com", role="client", status="active", google_sub="pa1"),
+        models.User(email="dirty@x.com", role="client", status="active", google_sub="pa2"),
+    ])
+    db_session.commit()
+    # two case variants -> fail closed, do not pick an arbitrary row
+    assert crud._resolve_partner(db_session, "DIRTY@x.com") is None
