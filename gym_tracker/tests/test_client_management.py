@@ -155,3 +155,52 @@ def test_cutover_seeds_allowed_emails(tmp_path, monkeypatch):
     # case-insensitive dedupe: "Existing@x.com" did not create a second row
     assert sum(1 for r in rows if r[0] == "existing@x.com") == 1
     assert sum(1 for r in rows if r[0] == "a@x.com") == 1
+
+
+# ---------------------------------------------------------------------------
+# Task 5 — public invite confirmation route
+# ---------------------------------------------------------------------------
+
+def test_confirm_valid_token_activates(client, db_session):
+    from gym_tracker.invites import hash_token
+    db_session.add(models.User(email="c@x.com", google_sub=None, status="pending",
+                               role="client", invite_token_hash=hash_token("RAW")))
+    db_session.commit()
+    r = client.get("/invite/confirm?token=RAW")
+    assert r.status_code == 200
+    u = db_session.query(models.User).filter_by(email="c@x.com").one()
+    assert u.status == "active"
+    assert u.confirmed_at is not None
+    assert u.invite_token_hash is None
+
+
+def test_confirm_unknown_token_shows_invalid(client):
+    r = client.get("/invite/confirm?token=NOPE")
+    assert r.status_code in (200, 410)
+    assert "invalid" in r.text.lower() or "already" in r.text.lower()
+
+
+def test_confirm_missing_token_shows_invalid(client):
+    r = client.get("/invite/confirm")
+    assert r.status_code in (200, 410)
+    assert "invalid" in r.text.lower() or "already" in r.text.lower()
+
+
+def test_confirm_reused_token_shows_invalid(client, db_session):
+    db_session.add(models.User(email="c@x.com", google_sub=None, status="active",
+                               role="client", invite_token_hash=None))
+    db_session.commit()
+    r = client.get("/invite/confirm?token=RAW")
+    assert r.status_code in (200, 410)
+    assert "invalid" in r.text.lower() or "already" in r.text.lower()
+
+
+def test_confirm_disabled_after_issue_shows_invalid(client, db_session):
+    from gym_tracker.invites import hash_token
+    db_session.add(models.User(email="c@x.com", google_sub=None, status="disabled",
+                               role="client", invite_token_hash=hash_token("RAW")))
+    db_session.commit()
+    r = client.get("/invite/confirm?token=RAW")
+    assert r.status_code in (200, 410)
+    u = db_session.query(models.User).filter_by(email="c@x.com").one()
+    assert u.status == "disabled"

@@ -17,6 +17,8 @@ from gym_tracker import crud, models, progress, progress_entries, schemas
 from gym_tracker.auth import router as auth_router
 from gym_tracker.config import get_settings
 from gym_tracker.database import SessionLocal, engine
+from gym_tracker.email import EmailSendError, send_invite_email
+from gym_tracker.invites import generate_token, hash_token
 
 # -------------------------------------------------------------
 # App setup
@@ -35,6 +37,7 @@ PUBLIC_PATHS = {
     "/me",  # keep public if you use it for debugging
     "/privacy",
     "/terms",
+    "/invite/confirm",  # public: consume an invite token (no session required)
     "/dev/login",  # dev-only login bypass (gated by DEV_LOGIN env var; see route)
 }
 
@@ -201,6 +204,43 @@ def terms_of_service(request: Request, db: Session = Depends(get_db)):
         "current_user": user,
         "last_updated": "September 29, 2025"
     })
+
+
+# -------------------------------------------------------------
+# Public invite confirmation (spec 5.6) — no auth dependency
+# -------------------------------------------------------------
+@app.get("/invite/confirm", response_class=HTMLResponse)
+def invite_confirm(request: Request, db: Session = Depends(get_db)):
+    """Consume an invite token: flip the matching pending row to active.
+
+    Idempotent from the user's point of view — an unknown, already-used, or
+    no-longer-pending token renders the 'invalid or already used' page. The
+    page is returned with HTTP 200 (it is a page, not an API).
+    """
+    token = request.query_params.get("token", "")
+    row = None
+    if token:
+        row = (
+            db.query(models.User)
+            .filter(
+                models.User.invite_token_hash == hash_token(token),
+                models.User.status == "pending",
+            )
+            .one_or_none()
+        )
+    if row is None:
+        return templates.TemplateResponse(
+            request, "invite_invalid.html", {"current_user": None}
+        )
+
+    row.status = "active"
+    row.confirmed_at = datetime.utcnow()
+    row.invite_token_hash = None
+    row.is_active = True
+    db.commit()
+    return templates.TemplateResponse(
+        request, "invite_confirmed.html", {"current_user": None}
+    )
 
 # -------------------------------------------------------------
 # Summary endpoint (scoped)
