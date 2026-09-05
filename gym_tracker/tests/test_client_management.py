@@ -231,6 +231,61 @@ def test_migration_aborts_on_ci_duplicate_emails(tmp_path, monkeypatch):
         get_settings.cache_clear()
 
 
+def test_migration_aborts_on_empty_string_duplicate_emails(tmp_path, monkeypatch):
+    from alembic import command
+    from alembic.config import Config
+
+    url = f"sqlite:///{tmp_path / 'blankdups.db'}"
+    eng = _make_legacy_db(url)
+    with eng.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO users (google_sub, email, email_verified, role, is_active, "
+            "created_at, last_login_at) VALUES "
+            "('g1', '', 0, 'client', 1, '2020-01-01', '2020-01-01'), "
+            "('g2', '', 0, 'client', 1, '2020-01-01', '2020-01-01')"
+        ))
+    monkeypatch.setenv("ALLOWED_EMAILS", "")
+    monkeypatch.setenv("SQLALCHEMY_DATABASE_URL", url)
+    monkeypatch.setenv("DATABASE_URL", url)
+    get_settings.cache_clear()
+    try:
+        cfg = Config("alembic.ini")
+        cfg.set_main_option("sqlalchemy.url", url)
+        command.stamp(cfg, "pe01standalone")
+        with pytest.raises(RuntimeError) as e:
+            command.upgrade(cfg, "head")
+        assert "''" in str(e.value)  # the empty string is named as the offender
+        # aborted BEFORE any DDL — no invite columns were added, rows intact
+        cols = {c["name"] for c in sa_inspect(eng).get_columns("users")}
+        assert "status" not in cols and "invite_token_hash" not in cols
+        with eng.connect() as conn:
+            assert conn.execute(text("SELECT COUNT(*) FROM users")).scalar() == 2
+    finally:
+        get_settings.cache_clear()
+
+
+def test_migration_allows_repeated_null_emails(tmp_path, monkeypatch):
+    url = f"sqlite:///{tmp_path / 'nulls.db'}"
+    eng = _make_legacy_db(url)
+    with eng.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO users (google_sub, email, email_verified, role, is_active, "
+            "created_at, last_login_at) VALUES "
+            "('g1', NULL, 0, 'client', 1, '2020-01-01', '2020-01-01'), "
+            "('g2', NULL, 0, 'client', 1, '2020-01-01', '2020-01-01')"
+        ))
+    monkeypatch.setenv("ALLOWED_EMAILS", "")
+    monkeypatch.setenv("SQLALCHEMY_DATABASE_URL", url)
+    monkeypatch.setenv("DATABASE_URL", url)
+    get_settings.cache_clear()
+    try:
+        _run_clientmgmt01(url)  # must NOT raise
+        cols = {c["name"] for c in sa_inspect(eng).get_columns("users")}
+        assert "status" in cols
+    finally:
+        get_settings.cache_clear()
+
+
 def test_migration_enforces_ci_email_uniqueness(tmp_path, monkeypatch):
     from sqlalchemy.exc import IntegrityError
 

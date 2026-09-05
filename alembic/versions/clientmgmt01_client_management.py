@@ -70,15 +70,20 @@ def _assert_no_ci_duplicate_emails(bind) -> None:
     """Fail the migration if two rows already share an email case-insensitively.
 
     We must not add the CI-uniqueness invariant on top of dirty data, and we
-    must not silently pick a winner. List the offenders and stop.
+    must not silently pick a winner. List the offenders and stop BEFORE any DDL.
+
+    Only NULL emails are allowed to repeat (a unique index permits multiple
+    NULLs). Empty strings are NOT NULL, so ``''`` counts as a real value and two
+    ``''`` rows are a duplicate -- otherwise they would sail past this guard and
+    fail with IntegrityError after the additive DDL had partially applied.
     """
     dups = bind.execute(sa.text(
         "SELECT lower(email) AS e FROM users "
-        "WHERE email IS NOT NULL AND email <> '' "
+        "WHERE email IS NOT NULL "
         "GROUP BY lower(email) HAVING COUNT(*) > 1"
     )).fetchall()
     if dups:
-        offenders = ", ".join(sorted(r[0] for r in dups))
+        offenders = ", ".join(sorted(repr(r[0]) for r in dups))
         raise RuntimeError(
             "clientmgmt01 aborted: users.email has case-insensitive duplicate(s): "
             f"{offenders}. Resolve these rows by hand (this migration will not "
