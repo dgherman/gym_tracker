@@ -14,6 +14,7 @@ import logging
 from typing import Optional, Tuple
 
 import httpx
+from markupsafe import escape
 
 from gym_tracker.config import Settings
 
@@ -27,21 +28,28 @@ class EmailSendError(Exception):
 
 
 def _render(confirm_url: str, to_name: Optional[str]) -> Tuple[str, str, str]:
-    greeting = f"Hi {to_name}," if to_name else "Hi,"
     subject = "You're invited to Gym Tracker"
+
+    # Plain-text part: no markup context, use the raw values.
+    text_greeting = f"Hi {to_name}," if to_name else "Hi,"
     text = (
-        f"{greeting}\n\n"
+        f"{text_greeting}\n\n"
         "An administrator has invited you to Gym Tracker. Confirm your account "
         "using the link below, then sign in with your Google account:\n\n"
         f"{confirm_url}\n\n"
         "If you weren't expecting this, you can ignore this email."
     )
+
+    # HTML part: every interpolated value is attacker-influenced (client name,
+    # request-derived base URL) -> escape for both text and attribute context.
+    safe_url = escape(confirm_url)
+    html_greeting = f"Hi {escape(to_name)}," if to_name else "Hi,"
     html = (
-        f"<p>{greeting}</p>"
+        f"<p>{html_greeting}</p>"
         "<p>An administrator has invited you to Gym Tracker. Confirm your "
         "account, then sign in with your Google account:</p>"
-        f'<p><a href="{confirm_url}">Confirm my account</a></p>'
-        f"<p>Or paste this link into your browser:<br>{confirm_url}</p>"
+        f'<p><a href="{safe_url}">Confirm my account</a></p>'
+        f"<p>Or paste this link into your browser:<br>{safe_url}</p>"
         "<p>If you weren't expecting this, you can ignore this email.</p>"
     )
     return subject, text, html

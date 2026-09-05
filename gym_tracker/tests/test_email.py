@@ -135,3 +135,22 @@ def test_unknown_provider_raises(monkeypatch):
     from gym_tracker.email import send_invite_email, EmailSendError
     with pytest.raises(EmailSendError):
         send_invite_email("c@example.com", "https://h/x?token=RAW")
+
+
+# ---------------------------------------------------------------------------
+# Review N1 — HTML body must escape interpolated name / URL
+# ---------------------------------------------------------------------------
+
+def test_html_body_escapes_name_and_url():
+    from gym_tracker.email import _render
+    _subject, text, html = _render(
+        "https://h/invite/confirm?token=a&b<c\"d",
+        to_name='<script>alert(1)</script>',
+    )
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;" in html
+    assert "a&b<c" not in html          # raw ampersand/angle not in HTML
+    assert "a&amp;b&lt;c" in html
+    # plain-text part keeps the raw values
+    assert "<script>alert(1)</script>" in text
+    assert "a&b<c\"d" in text
