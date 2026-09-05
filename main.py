@@ -933,16 +933,21 @@ def _get_client_row(db: Session, client_id: int) -> models.User:
     return row
 
 
-def _issue_invite(row: models.User, request: Request, admin_id: int) -> dict:
-    """Rotate the invite token on `row`, send the email, return the JSON body.
+def _issue_invite(db: Session, row: models.User, request: Request, admin_id: int) -> dict:
+    """Rotate the invite token on `row`, COMMIT, then send the email.
 
-    A send failure is non-fatal: the row keeps its new token and the caller
-    still succeeds, with a `warning` field so the UI can offer 'Resend'.
+    Store-hash-then-send: the row and its new token are persisted before any
+    outbound call, so a send failure (or a crash mid-send) can never leave a
+    live confirm link with no matching row. A send failure is non-fatal — the
+    committed row keeps its token and the response carries a `warning` field so
+    the UI can offer 'Resend'.
     """
     raw = generate_token()
     row.invite_token_hash = hash_token(raw)
     row.invited_at = datetime.utcnow()
     row.invited_by_id = admin_id
+    db.commit()
+    db.refresh(row)
 
     body = {"id": row.id, "status": row.status}
     try:
@@ -984,9 +989,7 @@ def admin_create_client(
         invited_at=datetime.utcnow(),
     )
     db.add(row)
-    db.flush()  # assign row.id before we build the confirm URL / send
-    body = _issue_invite(row, request, admin_user.id)
-    db.commit()
+    body = _issue_invite(db, row, request, admin_user.id)  # commits, then sends
     return JSONResponse(status_code=201, content=body)
 
 
@@ -1000,9 +1003,7 @@ def admin_resend_client(
     row = _get_client_row(db, client_id)
     if row.status != "pending":
         raise HTTPException(status_code=409, detail="Only a pending invitation can be resent")
-    body = _issue_invite(row, request, admin_user.id)
-    db.commit()
-    return body
+    return _issue_invite(db, row, request, admin_user.id)  # commits, then sends
 
 
 @app.post("/api/admin/clients/{client_id}/disable")
@@ -1032,9 +1033,7 @@ def admin_reinvite_client(
     row.status = "pending"
     row.confirmed_at = None
     row.is_active = False
-    body = _issue_invite(row, request, admin_user.id)
-    db.commit()
-    return body
+    return _issue_invite(db, row, request, admin_user.id)  # commits status + token, then sends
 
 
 @app.get("/admin/clients", response_class=HTMLResponse)

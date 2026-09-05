@@ -442,6 +442,70 @@ def test_create_ci_duplicate_returns_409_not_500(admin_client, db_session, no_em
     assert r.status_code == 409
 
 
+def test_invite_row_is_committed_before_email_is_sent(admin_client, db_session, monkeypatch):
+    # B4: store-hash-then-send. At send time the row+token must already be
+    # visible in an independent session (i.e. committed).
+    seen = {}
+
+    def capture(to, url, **kw):
+        probe = TestSessionLocal()
+        try:
+            row = probe.query(models.User).filter_by(email=to).one_or_none()
+            seen["persisted"] = row is not None
+            seen["hash"] = bool(row and row.invite_token_hash)
+        finally:
+            probe.close()
+
+    monkeypatch.setattr("main.send_invite_email", capture)
+    r = admin_client.post("/api/admin/clients", json={"email": "commit1st@x.com"})
+    assert r.status_code == 201
+    assert seen == {"persisted": True, "hash": True}
+
+
+def test_resend_row_committed_before_email(admin_client, db_session, monkeypatch):
+    monkeypatch.setattr("main.send_invite_email", lambda *a, **k: None)
+    admin_client.post("/api/admin/clients", json={"email": "rs@x.com"})
+    u = _one(db_session, "rs@x.com")
+    old_hash = u.invite_token_hash
+
+    seen = {}
+
+    def capture(to, url, **kw):
+        probe = TestSessionLocal()
+        try:
+            row = probe.query(models.User).filter_by(email=to).one()
+            seen["hash_rotated"] = row.invite_token_hash not in (None, old_hash)
+        finally:
+            probe.close()
+
+    monkeypatch.setattr("main.send_invite_email", capture)
+    r = admin_client.post(f"/api/admin/clients/{u.id}/resend")
+    assert r.status_code == 200
+    assert seen.get("hash_rotated") is True
+
+
+def test_reinvite_email_failure_keeps_committed_pending_row(admin_client, db_session, monkeypatch):
+    from gym_tracker.email import EmailSendError
+
+    monkeypatch.setattr("main.send_invite_email", lambda *a, **k: None)
+    admin_client.post("/api/admin/clients", json={"email": "rv@x.com"})
+    u = _one(db_session, "rv@x.com")
+    admin_client.post(f"/api/admin/clients/{u.id}/disable")
+
+    def boom(*a, **k):
+        raise EmailSendError("smtp down")
+
+    monkeypatch.setattr("main.send_invite_email", boom)
+    r = admin_client.post(f"/api/admin/clients/{u.id}/reinvite")
+    assert r.status_code == 200
+    assert r.json().get("warning")
+    db_session.expire_all()
+    row = _one(db_session, "rv@x.com")
+    assert row.status == "pending"
+    assert row.confirmed_at is None
+    assert row.invite_token_hash is not None
+
+
 def datetime_now():
     from datetime import datetime
     return datetime.utcnow()
