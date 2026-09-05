@@ -24,8 +24,9 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)
-    # OIDC stable subject from Google
-    google_sub = Column(String(255), unique=True, index=True, nullable=False)
+    # OIDC stable subject from Google. NULL for a pending invite that has not
+    # logged in yet; backfilled on first Google sign-in.
+    google_sub = Column(String(255), unique=True, index=True, nullable=True)
 
     # Profile
     email = Column(String(255), index=True, nullable=True)
@@ -36,6 +37,15 @@ class User(Base):
     # Future RBAC hook (string for now)
     role = Column(String(50), nullable=False, default="client")
     is_active = Column(Boolean, nullable=False, default=True)
+
+    # Client-management lifecycle. Single source of truth for login eligibility.
+    # One of: "pending" (invited, not confirmed), "active", "disabled".
+    status = Column(String(20), nullable=False, server_default="active", default="active")
+    # SHA-256 hex digest of the raw invite token; cleared on confirm.
+    invite_token_hash = Column(String(64), nullable=True, unique=True)
+    invited_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    invited_at = Column(DateTime, nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
 
     # Audit
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
