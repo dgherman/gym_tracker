@@ -49,7 +49,6 @@ class Settings:
         self.GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
         self.OAUTH_REDIRECT_URI: str   = os.getenv("OAUTH_REDIRECT_URI", "http://localhost:8000/auth/callback")
         self.BASE_URL: str             = os.getenv("BASE_URL", "http://localhost:8000")
-        self.ALLOWED_EMAILS: str       = os.getenv("ALLOWED_EMAILS", "")
 
         # ---- Outbound email (client invites) ----
         self.EMAIL_ENABLED: bool = (
@@ -61,10 +60,6 @@ class Settings:
         self.EMAIL_REPLY_TO: str = os.getenv("EMAIL_REPLY_TO", "dumitru@x-mas.ro")
         # Base URL for building the /invite/confirm link; empty -> derive from the request.
         self.APP_BASE_URL: str   = os.getenv("APP_BASE_URL", "")
-
-    @property
-    def allowed_emails_set(self) -> set[str]:
-        return {e.strip().lower() for e in self.ALLOWED_EMAILS.split(",") if e.strip()}
 
     @property
     def is_sqlite(self) -> bool:
