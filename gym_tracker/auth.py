@@ -87,8 +87,12 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
         )
     if user.status == "disabled":
         raise HTTPException(status_code=403, detail="Access for this account has been revoked.")
+    # `status` is an unconstrained VARCHAR: fail closed on anything that is not
+    # explicitly "active" (empty string, a typo, a future value we do not know).
+    if user.status != "active":
+        raise HTTPException(status_code=403, detail="Access for this account is not active.")
 
-    # status == "active"
+    # status == "active" — safe to bind / accept the Google identity now.
     if user.google_sub is None:
         # First login for an invited account: bind this Google identity.
         user.google_sub = google_sub

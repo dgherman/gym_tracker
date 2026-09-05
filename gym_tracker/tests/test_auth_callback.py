@@ -97,3 +97,19 @@ def test_active_email_case_insensitive(db_session, monkeypatch):
     u = _mk(db_session, email="Mixed@X.com", google_sub="g-ok", status="active")
     req, _ = call_callback({"email": "mixed@x.com", "sub": "g-ok"}, db_session, monkeypatch)
     assert req.session["user_id"] == u.id
+
+
+def test_unknown_status_rejected(db_session, monkeypatch):
+    # `status` is an unconstrained VARCHAR; any value other than "active" must
+    # not fall through to the login path.
+    _mk(db_session, email="u@x.com", google_sub="g1", status="unexpected")
+    with pytest.raises(HTTPException) as e:
+        call_callback({"email": "u@x.com", "sub": "g1"}, db_session, monkeypatch)
+    assert e.value.status_code == 403
+
+
+def test_empty_status_rejected(db_session, monkeypatch):
+    _mk(db_session, email="e@x.com", google_sub="g1", status="")
+    with pytest.raises(HTTPException) as e:
+        call_callback({"email": "e@x.com", "sub": "g1"}, db_session, monkeypatch)
+    assert e.value.status_code == 403
