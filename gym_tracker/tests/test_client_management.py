@@ -169,9 +169,12 @@ def test_cutover_adds_columns_and_seeds_allowed_emails(tmp_path, monkeypatch):
         command.stamp(cfg, "pe01standalone")
         command.upgrade(cfg, "head")
 
-        cols = {c["name"] for c in sa_inspect(eng).get_columns("users")}
+        insp = sa_inspect(eng)
+        cols = {c["name"] for c in insp.get_columns("users")}
         assert {"status", "invite_token_hash", "invited_by_id",
                 "invited_at", "confirmed_at"} <= cols
+        # N3: the self-referential FK exists on SQLite too (schema parity with MySQL)
+        assert any(fk["name"] == "fk_users_invited_by" for fk in insp.get_foreign_keys("users"))
 
         with eng.connect() as conn:
             rows = list(conn.execute(text(
