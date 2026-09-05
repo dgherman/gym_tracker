@@ -347,9 +347,32 @@ Full suite must pass: `pytest --maxfail=1 --disable-warnings -q`.
 
 ## 7. Rollout
 
+### 7.0 Local verification (Docker) before production
+
+Production is the Oracle host. Before deploying there, verify the full flow
+locally against a Docker build:
+
+1. Build the image locally and run it with a local MySQL (mirror the
+   production entrypoint: `alembic upgrade head` then Uvicorn).
+2. First pass with `EMAIL_ENABLED=false`: add a client in `/admin/clients`,
+   copy the `confirm_url` from the container logs, hit it, then sign in with a
+   matching Google account. Confirms schema, migration, callback matrix, and
+   UI without sending mail.
+3. Second pass with `EMAIL_ENABLED=true` + the real `RESEND_API_KEY` and
+   `APP_BASE_URL` set to the locally reachable URL: add a client with a real
+   address, confirm the email actually arrives from `admin@gym.x-mas.ro`,
+   click the real link, sign in.
+4. Run `alembic downgrade` one step and re-`upgrade` against the local MySQL
+   to confirm the migration is reversible and idempotent.
+
+Only after this passes locally, proceed to production.
+
+### 7.1 Production (Oracle host)
+
 1. Merge the PR. CI builds the image.
-2. Deploy. Container runs `alembic upgrade head`: columns added, existing
-   users set active, `ALLOWED_EMAILS` entries migrated to rows.
+2. Deploy to the Oracle host. Container runs `alembic upgrade head`: columns
+   added, existing users set active, `ALLOWED_EMAILS` entries migrated to
+   rows.
 3. Set `EMAIL_ENABLED=true`, `RESEND_API_KEY=...`, `APP_BASE_URL=https://<prod
    host>` in the deployment environment. Redeploy / restart.
 4. Verify: admin opens `/admin/clients`, adds a throwaway address, receives
