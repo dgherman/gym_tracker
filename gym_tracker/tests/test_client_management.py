@@ -322,3 +322,31 @@ def test_create_email_failure_still_creates_with_warning(admin_client, db_sessio
 def datetime_now():
     from datetime import datetime
     return datetime.utcnow()
+
+
+# ---------------------------------------------------------------------------
+# Task 7 — admin client management page
+# ---------------------------------------------------------------------------
+
+def test_admin_clients_page_lists_only_clients(admin_client, db_session):
+    db_session.add_all([
+        models.User(email="c1@x.com", role="client", status="active", google_sub="s1"),
+        models.User(email="t1@x.com", role="trainer", status="active", google_sub="s2"),
+        models.User(email="c2@x.com", role="client", status="pending", google_sub=None),
+    ])
+    db_session.commit()
+    r = admin_client.get("/admin/clients")
+    assert r.status_code == 200, r.text
+    assert "c1@x.com" in r.text and "c2@x.com" in r.text
+    assert "t1@x.com" not in r.text
+
+
+def test_admin_clients_page_requires_admin(client_client):
+    assert client_client.get("/admin/clients").status_code in (302, 303, 403)
+
+
+def test_admin_index_links_to_clients(admin_client):
+    r = admin_client.get("/admin")
+    assert r.status_code == 200
+    assert "/admin/clients" in r.text
+    assert "Coming Soon" not in r.text.split("Client Management")[1].split("</div>")[0]

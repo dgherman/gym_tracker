@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Client Management - Admin Console</title>
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+  >
+</head>
+<body class="bg-light">
+  {% include "_nav.html" %}
+  <div class="container py-4">
+    <div class="row">
+      <div class="col-12">
+        <nav aria-label="breadcrumb">
+          <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/">Main App</a></li>
+            <li class="breadcrumb-item"><a href="/admin">Admin Console</a></li>
+            <li class="breadcrumb-item active" aria-current="page">Client Management</li>
+          </ol>
+        </nav>
+
+        <div class="d-flex justify-content-between align-items-center mb-4">
+          <h1>Client Management</h1>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notification Area -->
+    <div id="notification"></div>
+
+    <!-- Add Client -->
+    <div class="row mb-4">
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header">
+            <h5 class="card-title mb-0">Invite a Client</h5>
+          </div>
+          <div class="card-body">
+            <form id="addClientForm" class="row g-2 align-items-end">
+              <div class="col-sm-5">
+                <label for="clientEmail" class="form-label">Email</label>
+                <input type="email" class="form-control" id="clientEmail" required
+                       placeholder="client@example.com">
+              </div>
+              <div class="col-sm-4">
+                <label for="clientName" class="form-label">Name <span class="text-muted">(optional)</span></label>
+                <input type="text" class="form-control" id="clientName" placeholder="Full name">
+              </div>
+              <div class="col-sm-3">
+                <button type="submit" class="btn btn-success w-100">Send Invite</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Clients Table -->
+    <div class="row">
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header">
+            <h5 class="card-title mb-0">All Clients</h5>
+          </div>
+          <div class="card-body">
+            <div class="table-responsive">
+              <table class="table table-striped">
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>Invited</th>
+                    <th>Confirmed</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for c in clients %}
+                  <tr>
+                    <td>{{ c.email }}</td>
+                    <td>{{ c.full_name or "" }}</td>
+                    <td>
+                      {% if c.status == "active" %}
+                        <span class="badge bg-success">Active</span>
+                      {% elif c.status == "pending" %}
+                        <span class="badge bg-warning text-dark">Pending</span>
+                      {% else %}
+                        <span class="badge bg-secondary">Disabled</span>
+                      {% endif %}
+                    </td>
+                    <td>{{ c.invited_at.strftime('%Y-%m-%d') if c.invited_at else "" }}</td>
+                    <td>{{ c.confirmed_at.strftime('%Y-%m-%d') if c.confirmed_at else "" }}</td>
+                    <td>
+                      {% if c.status == "pending" %}
+                        <button class="btn btn-sm btn-outline-primary"
+                                onclick="clientAction({{ c.id }}, 'resend')">Resend invite</button>
+                      {% elif c.status == "active" %}
+                        <button class="btn btn-sm btn-outline-warning"
+                                onclick="clientAction({{ c.id }}, 'disable')">Disable</button>
+                      {% elif c.status == "disabled" %}
+                        <button class="btn btn-sm btn-outline-success"
+                                onclick="clientAction({{ c.id }}, 'reinvite')">Re-invite</button>
+                      {% endif %}
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    function showNotification(message, type) {
+      document.getElementById('notification').innerHTML = `
+        <div class="alert alert-${type} alert-dismissible fade show" role="alert">
+          ${message}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>`;
+    }
+
+    function errorMessage(body) {
+      if (body && typeof body.detail === 'string') return body.detail;
+      if (body && Array.isArray(body.detail) && body.detail[0] && body.detail[0].msg) {
+        return body.detail[0].msg;
+      }
+      return 'An unexpected error occurred';
+    }
+
+    document.getElementById('addClientForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = document.getElementById('clientEmail').value.trim();
+      const name = document.getElementById('clientName').value.trim();
+      if (!email) { showNotification('Email is required', 'warning'); return; }
+      try {
+        const res = await fetch('/api/admin/clients', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, name: name || null })
+        });
+        const body = await res.json().catch(() => ({}));
+        if (res.ok) {
+          if (body.warning) {
+            showNotification('Client added, but the invite email failed: ' + body.warning +
+                             ' — use "Resend invite".', 'warning');
+          } else {
+            showNotification('Invite sent to ' + email, 'success');
+          }
+          setTimeout(() => location.reload(), 1200);
+        } else if (res.status === 409) {
+          showNotification('A user with that email already exists', 'danger');
+        } else {
+          showNotification(errorMessage(body), 'danger');
+        }
+      } catch (err) {
+        showNotification('Error adding client', 'danger');
+      }
+    });
+
+    async function clientAction(id, action) {
+      try {
+        const res = await fetch(`/api/admin/clients/${id}/${action}`, { method: 'POST' });
+        const body = await res.json().catch(() => ({}));
+        if (res.ok) {
+          if (body.warning) {
+            showNotification('Done, but the invite email failed: ' + body.warning, 'warning');
+          } else {
+            showNotification('Done', 'success');
+          }
+          setTimeout(() => location.reload(), 1000);
+        } else {
+          showNotification(errorMessage(body), 'danger');
+        }
+      } catch (err) {
+        showNotification('Error performing action', 'danger');
+      }
+    }
+  </script>
+</body>
+</html>
