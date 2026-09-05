@@ -168,8 +168,11 @@ def healthz():
 def dev_login(request: Request, db: Session = Depends(get_db)):
     if os.getenv("DEV_LOGIN", "").lower() not in ("1", "true", "yes"):
         raise HTTPException(status_code=404, detail="Not found")
-    email = os.getenv("DEV_LOGIN_EMAIL", "dev@example.com")
-    user = db.query(models.User).filter(models.User.email == email).first()
+    email = os.getenv("DEV_LOGIN_EMAIL", "dev@example.com").strip().lower()
+    user, ambiguous = crud.find_user_by_email_ci(db, email)
+    if ambiguous:
+        logger.error("dev_login refused: %r matches multiple users rows", email)
+        raise HTTPException(status_code=409, detail="DEV_LOGIN_EMAIL matches multiple users")
     if not user:
         user = models.User(
             google_sub=f"dev-{email}",

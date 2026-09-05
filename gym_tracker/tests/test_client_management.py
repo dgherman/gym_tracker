@@ -706,3 +706,36 @@ def test_create_race_other_integrity_error_retries_then_succeeds(admin_client, d
     assert r.status_code == 201
     row = _one(db_session, "retry@x.com")
     assert row.status == "pending" and row.invite_token_hash is not None
+
+
+# ---------------------------------------------------------------------------
+# Review R3-1 — /dev/login must use CI email lookup and fail closed
+# ---------------------------------------------------------------------------
+
+def test_dev_login_ci_matches_existing_row_no_insert(client, db_session):
+    db_session.add(models.User(email="Dev1@X.com", role="admin", status="active",
+                               google_sub="dev1-sub"))
+    db_session.commit()
+    before = db_session.query(models.User).count()
+
+    os.environ["DEV_LOGIN_EMAIL"] = "dev1@x.com"
+    r = client.get("/dev/login", follow_redirects=False)
+    assert r.status_code in (200, 302, 303, 307), r.text
+    # matched the dirty-case row -> no duplicate insert, no CI-index IntegrityError
+    assert db_session.query(models.User).count() == before
+    # and the session belongs to that admin row (admin-only page renders)
+    assert client.get("/admin/clients").status_code == 200
+
+
+def test_dev_login_ambiguous_ci_fails_closed(client, db_session):
+    db_session.add_all([
+        models.User(email="Dupe@X.com", role="admin", status="active", google_sub="d1"),
+        models.User(email="dupe@x.com", role="admin", status="active", google_sub="d2"),
+    ])
+    db_session.commit()
+    before = db_session.query(models.User).count()
+
+    os.environ["DEV_LOGIN_EMAIL"] = "dupe@x.com"
+    r = client.get("/dev/login", headers={"accept": "application/json"}, follow_redirects=False)
+    assert r.status_code == 409
+    assert db_session.query(models.User).count() == before  # no insert
