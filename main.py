@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -881,4 +881,152 @@ def admin_activities(
         request,
         "admin/activities.html",
         {"current_user": admin_user, "categories": categories},
+    )
+
+
+# -------------------------------------------------------------
+# Client Management (admin console) — page + API (spec 5.4 / 5.5)
+# -------------------------------------------------------------
+
+class ClientCreate(BaseModel):
+    email: str
+    name: Optional[str] = None
+
+
+def build_confirm_url(request: Request, raw_token: str) -> str:
+    """Absolute URL for the emailed confirmation link.
+
+    Prefer an explicit APP_BASE_URL in production; otherwise derive from the
+    incoming request.
+    """
+    base = settings.APP_BASE_URL or str(request.base_url).rstrip("/")
+    return f"{base}/invite/confirm?token={raw_token}"
+
+
+def _get_client_row(db: Session, client_id: int) -> models.User:
+    row = db.get(models.User, client_id)
+    if row is None or row.role != "client":
+        raise HTTPException(status_code=404, detail="Client not found")
+    return row
+
+
+def _issue_invite(row: models.User, request: Request, admin_id: int) -> dict:
+    """Rotate the invite token on `row`, send the email, return the JSON body.
+
+    A send failure is non-fatal: the row keeps its new token and the caller
+    still succeeds, with a `warning` field so the UI can offer 'Resend'.
+    """
+    raw = generate_token()
+    row.invite_token_hash = hash_token(raw)
+    row.invited_at = datetime.utcnow()
+    row.invited_by_id = admin_id
+
+    body = {"id": row.id, "status": row.status}
+    try:
+        send_invite_email(row.email, build_confirm_url(request, raw), to_name=row.full_name)
+    except EmailSendError as exc:
+        body["warning"] = str(exc)
+    return body
+
+
+@app.post("/api/admin/clients", status_code=201)
+def admin_create_client(
+    payload: ClientCreate,
+    request: Request,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    email = (payload.email or "").strip().lower()
+    if not email or "@" not in email or email.startswith("@") or email.endswith("@"):
+        raise HTTPException(status_code=400, detail="A valid email address is required")
+    exists = (
+        db.query(models.User)
+        .filter(func.lower(models.User.email) == email)
+        .one_or_none()
+    )
+    if exists:
+        raise HTTPException(status_code=409, detail="A user with that email already exists")
+
+    row = models.User(
+        email=email,
+        google_sub=None,
+        role="client",
+        status="pending",
+        full_name=(payload.name or None),
+        email_verified=False,
+        is_active=False,
+        invited_by_id=admin_user.id,
+        invited_at=datetime.utcnow(),
+    )
+    db.add(row)
+    db.flush()  # assign row.id before we build the confirm URL / send
+    body = _issue_invite(row, request, admin_user.id)
+    db.commit()
+    return JSONResponse(status_code=201, content=body)
+
+
+@app.post("/api/admin/clients/{client_id}/resend")
+def admin_resend_client(
+    client_id: int,
+    request: Request,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    row = _get_client_row(db, client_id)
+    if row.status != "pending":
+        raise HTTPException(status_code=409, detail="Only a pending invitation can be resent")
+    body = _issue_invite(row, request, admin_user.id)
+    db.commit()
+    return body
+
+
+@app.post("/api/admin/clients/{client_id}/disable")
+def admin_disable_client(
+    client_id: int,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    row = _get_client_row(db, client_id)
+    # Soft-disable only. Historical data (purchases/sessions/progress) is retained.
+    row.status = "disabled"
+    row.is_active = False
+    db.commit()
+    return {"id": row.id, "status": row.status}
+
+
+@app.post("/api/admin/clients/{client_id}/reinvite")
+def admin_reinvite_client(
+    client_id: int,
+    request: Request,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    row = _get_client_row(db, client_id)
+    if row.status != "disabled":
+        raise HTTPException(status_code=409, detail="Only a disabled client can be re-invited")
+    row.status = "pending"
+    row.confirmed_at = None
+    row.is_active = False
+    body = _issue_invite(row, request, admin_user.id)
+    db.commit()
+    return body
+
+
+@app.get("/admin/clients", response_class=HTMLResponse)
+def admin_clients(
+    request: Request,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin client management page — lists role='client' rows only."""
+    clients = (
+        db.query(models.User)
+        .filter(models.User.role == "client")
+        .order_by(models.User.invited_at.desc().nullslast(), models.User.id.desc())
+        .all()
+    )
+    return templates.TemplateResponse(
+        request,
+        "admin/clients.html",
+        {"current_user": admin_user, "clients": clients},
     )

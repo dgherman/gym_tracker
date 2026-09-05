@@ -204,3 +204,121 @@ def test_confirm_disabled_after_issue_shows_invalid(client, db_session):
     assert r.status_code in (200, 410)
     u = db_session.query(models.User).filter_by(email="c@x.com").one()
     assert u.status == "disabled"
+
+
+# ---------------------------------------------------------------------------
+# Task 6 — admin client API
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def no_email(monkeypatch):
+    """Record send_invite_email calls instead of sending."""
+    sent = []
+    monkeypatch.setattr("main.send_invite_email",
+                        lambda to, url, **kw: sent.append((to, url, kw)))
+    return sent
+
+
+def _one(db_session, email):
+    return db_session.query(models.User).filter_by(email=email).one()
+
+
+def test_create_client_makes_pending_and_sends(admin_client, db_session, no_email):
+    r = admin_client.post("/api/admin/clients", json={"email": "New@X.com", "name": "N"})
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["status"] == "pending"
+    u = _one(db_session, "new@x.com")
+    assert u.role == "client" and u.status == "pending"
+    assert u.google_sub is None
+    assert u.invite_token_hash and u.invited_by_id == admin_client._ids["admin"]
+    assert u.invited_at is not None
+    assert no_email and no_email[0][0] == "new@x.com"
+    assert "/invite/confirm?token=" in no_email[0][1]
+
+
+def test_create_duplicate_409(admin_client, db_session, no_email):
+    assert admin_client.post("/api/admin/clients", json={"email": "dup@x.com"}).status_code == 201
+    r = admin_client.post("/api/admin/clients", json={"email": "DUP@x.com"})
+    assert r.status_code == 409
+
+
+def test_create_bad_email_400(admin_client, no_email):
+    assert admin_client.post("/api/admin/clients", json={"email": "  "}).status_code == 400
+    assert admin_client.post("/api/admin/clients", json={"email": "nope"}).status_code == 400
+
+
+def test_non_admin_forbidden(client_client, db_session, no_email):
+    db_session.add(models.User(email="p@x.com", role="client", status="pending",
+                               google_sub=None, invite_token_hash="h"))
+    db_session.commit()
+    pid = _one(db_session, "p@x.com").id
+    assert client_client.post("/api/admin/clients", json={"email": "z@x.com"}).status_code == 403
+    for suffix in ("resend", "disable", "reinvite"):
+        r = client_client.post(f"/api/admin/clients/{pid}/{suffix}")
+        assert r.status_code == 403, suffix
+
+
+def test_resend_only_pending(admin_client, db_session, no_email):
+    admin_client.post("/api/admin/clients", json={"email": "r@x.com"})
+    u = _one(db_session, "r@x.com")
+    old_hash = u.invite_token_hash
+    r = admin_client.post(f"/api/admin/clients/{u.id}/resend")
+    assert r.status_code == 200
+    db_session.refresh(u)
+    assert u.invite_token_hash and u.invite_token_hash != old_hash
+    assert len(no_email) == 2  # create + resend
+
+    u.status = "active"
+    db_session.commit()
+    assert admin_client.post(f"/api/admin/clients/{u.id}/resend").status_code == 409
+    assert admin_client.post("/api/admin/clients/9999/resend").status_code == 404
+
+
+def test_disable_sets_status_and_is_idempotent(admin_client, db_session, no_email):
+    admin_client.post("/api/admin/clients", json={"email": "d@x.com"})
+    u = _one(db_session, "d@x.com")
+    assert admin_client.post(f"/api/admin/clients/{u.id}/disable").status_code == 200
+    db_session.refresh(u)
+    assert u.status == "disabled"
+    # second call is a no-op success
+    assert admin_client.post(f"/api/admin/clients/{u.id}/disable").status_code == 200
+    assert admin_client.post("/api/admin/clients/9999/disable").status_code == 404
+
+
+def test_reinvite_only_disabled(admin_client, db_session, no_email):
+    admin_client.post("/api/admin/clients", json={"email": "ri@x.com"})
+    u = _one(db_session, "ri@x.com")
+    admin_client.post(f"/api/admin/clients/{u.id}/disable")
+    db_session.refresh(u)
+    u.confirmed_at = datetime_now()
+    db_session.commit()
+    r = admin_client.post(f"/api/admin/clients/{u.id}/reinvite")
+    assert r.status_code == 200
+    db_session.refresh(u)
+    assert u.status == "pending"
+    assert u.confirmed_at is None
+    assert u.invite_token_hash
+    assert no_email  # invite attempted again
+
+    u.status = "active"
+    db_session.commit()
+    assert admin_client.post(f"/api/admin/clients/{u.id}/reinvite").status_code == 409
+
+
+def test_create_email_failure_still_creates_with_warning(admin_client, db_session, monkeypatch):
+    from gym_tracker.email import EmailSendError
+
+    def boom(*a, **k):
+        raise EmailSendError("smtp down")
+
+    monkeypatch.setattr("main.send_invite_email", boom)
+    r = admin_client.post("/api/admin/clients", json={"email": "f@x.com"})
+    assert r.status_code == 201
+    assert r.json().get("warning")
+    assert _one(db_session, "f@x.com").status == "pending"
+
+
+def datetime_now():
+    from datetime import datetime
+    return datetime.utcnow()
