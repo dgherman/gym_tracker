@@ -897,10 +897,30 @@ def build_confirm_url(request: Request, raw_token: str) -> str:
     """Absolute URL for the emailed confirmation link.
 
     Prefer an explicit APP_BASE_URL in production; otherwise derive from the
-    incoming request.
+    incoming request. Strip a trailing slash from whichever base is chosen so a
+    configured "https://host/" does not yield "https://host//invite/confirm".
     """
-    base = settings.APP_BASE_URL or str(request.base_url).rstrip("/")
+    base = (settings.APP_BASE_URL or str(request.base_url)).rstrip("/")
     return f"{base}/invite/confirm?token={raw_token}"
+
+
+def _clients_ordered(db: Session):
+    """Query for role='client' rows, newest invite first.
+
+    Ordering is expressed portably: `invited_at IS NULL` (a boolean, sorts
+    False < True so non-NULL rows come first) then `invited_at DESC` then
+    `id DESC`. Avoids `.nullslast()`, which compiles to `DESC NULLS LAST` and
+    is rejected by MySQL.
+    """
+    return (
+        db.query(models.User)
+        .filter(models.User.role == "client")
+        .order_by(
+            models.User.invited_at.is_(None),
+            models.User.invited_at.desc(),
+            models.User.id.desc(),
+        )
+    )
 
 
 def _get_client_row(db: Session, client_id: int) -> models.User:
@@ -1019,12 +1039,7 @@ def admin_clients(
     db: Session = Depends(get_db),
 ):
     """Admin client management page — lists role='client' rows only."""
-    clients = (
-        db.query(models.User)
-        .filter(models.User.role == "client")
-        .order_by(models.User.invited_at.desc().nullslast(), models.User.id.desc())
-        .all()
-    )
+    clients = _clients_ordered(db).all()
     return templates.TemplateResponse(
         request,
         "admin/clients.html",

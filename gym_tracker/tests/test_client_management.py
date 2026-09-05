@@ -1,5 +1,6 @@
 """Client Management feature tests: schema/migration, confirm route, admin API, admin page."""
 import os
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -350,3 +351,40 @@ def test_admin_index_links_to_clients(admin_client):
     assert r.status_code == 200
     assert "/admin/clients" in r.text
     assert "Coming Soon" not in r.text.split("Client Management")[1].split("</div>")[0]
+
+
+# ---------------------------------------------------------------------------
+# Review B1 — /admin/clients ordering must be MySQL-portable (no NULLS LAST)
+# ---------------------------------------------------------------------------
+
+def test_clients_ordering_is_mysql_portable():
+    import main
+    from sqlalchemy.dialects import mysql
+
+    db = TestSessionLocal()
+    try:
+        stmt = str(main._clients_ordered(db).statement.compile(dialect=mysql.dialect()))
+    finally:
+        db.close()
+    assert "NULLS LAST" not in stmt.upper()
+    assert "NULLS FIRST" not in stmt.upper()
+
+
+# ---------------------------------------------------------------------------
+# Review N4 — build_confirm_url strips a trailing slash from either base
+# ---------------------------------------------------------------------------
+
+def test_build_confirm_url_configured_base_no_double_slash(monkeypatch):
+    import main
+    monkeypatch.setattr(main.settings, "APP_BASE_URL", "https://h/")
+    req = SimpleNamespace(base_url="http://ignored.example/")
+    url = main.build_confirm_url(req, "TOK")
+    assert url == "https://h/invite/confirm?token=TOK"
+
+
+def test_build_confirm_url_request_fallback_no_double_slash(monkeypatch):
+    import main
+    monkeypatch.setattr(main.settings, "APP_BASE_URL", "")
+    req = SimpleNamespace(base_url="http://testserver/")
+    url = main.build_confirm_url(req, "TOK")
+    assert url == "http://testserver/invite/confirm?token=TOK"
