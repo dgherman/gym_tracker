@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -933,6 +934,49 @@ def _get_client_row(db: Session, client_id: int) -> models.User:
     return row
 
 
+_DUP_EMAIL_DETAIL = "A user with that email already exists"
+
+
+def _is_email_uniqueness_error(exc: IntegrityError) -> bool:
+    """True when an IntegrityError is the case-insensitive email uniqueness
+    violation (MySQL constraint or the SQLite functional index), regardless of
+    dialect wording."""
+    return "uq_users_email_ci" in str(getattr(exc, "orig", exc)).lower()
+
+
+def _persist_new_client(db: Session, row: models.User, admin_id: int) -> str:
+    """Commit a new pending client row with a fresh invite token; return the raw
+    token.
+
+    Concurrency: the CI pre-check in the caller is not atomic, so two requests
+    can both reach here. `uq_users_email_ci` then makes the losing commit raise
+    IntegrityError. Handle it: on the email-uniqueness violation (or if a row now
+    exists) -> 409, matching the normal duplicate path; on any other
+    IntegrityError (e.g. an invite_token_hash collision) regenerate the token and
+    retry once, then re-raise so nothing is swallowed silently.
+    """
+    for attempt in (1, 2):
+        raw = generate_token()
+        row.invite_token_hash = hash_token(raw)
+        row.invited_at = datetime.utcnow()
+        row.invited_by_id = admin_id
+        db.add(row)
+        try:
+            db.commit()
+            db.refresh(row)
+            return raw
+        except IntegrityError as exc:
+            db.rollback()
+            existing, ambiguous = crud.find_user_by_email_ci(db, row.email)
+            if existing or ambiguous or _is_email_uniqueness_error(exc):
+                logger.warning("Client create lost the race for %r: %s", row.email, exc)
+                raise HTTPException(status_code=409, detail=_DUP_EMAIL_DETAIL)
+            if attempt == 2:
+                raise
+            logger.warning("Client create IntegrityError (retrying with new token): %s", exc)
+    raise RuntimeError("unreachable")  # pragma: no cover
+
+
 def _issue_invite(db: Session, row: models.User, request: Request, admin_id: int) -> dict:
     """Rotate the invite token on `row`, COMMIT, then send the email.
 
@@ -975,7 +1019,7 @@ def admin_create_client(
             detail="Multiple accounts already use that email; contact an administrator",
         )
     if exists:
-        raise HTTPException(status_code=409, detail="A user with that email already exists")
+        raise HTTPException(status_code=409, detail=_DUP_EMAIL_DETAIL)
 
     row = models.User(
         email=email,
@@ -988,8 +1032,13 @@ def admin_create_client(
         invited_by_id=admin_user.id,
         invited_at=datetime.utcnow(),
     )
-    db.add(row)
-    body = _issue_invite(db, row, request, admin_user.id)  # commits, then sends
+    # store-hash-then-send: persist the row + token (race-safe) before emailing.
+    raw = _persist_new_client(db, row, admin_user.id)
+    body = {"id": row.id, "status": row.status}
+    try:
+        send_invite_email(row.email, build_confirm_url(request, raw), to_name=row.full_name)
+    except EmailSendError as exc:
+        body["warning"] = str(exc)
     return JSONResponse(status_code=201, content=body)
 
 

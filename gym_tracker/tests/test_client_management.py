@@ -657,3 +657,52 @@ def test_resolve_partner_ambiguous_does_not_link(db_session):
     db_session.commit()
     # two case variants -> fail closed, do not pick an arbitrary row
     assert crud._resolve_partner(db_session, "DIRTY@x.com") is None
+
+
+# ---------------------------------------------------------------------------
+# Review R2-3 — concurrent create: commit-time IntegrityError -> 409, not 500
+# ---------------------------------------------------------------------------
+
+def test_create_race_email_uniqueness_returns_409(admin_client, db_session, no_email, monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.orm import Session as SASession
+
+    state = {"boom": True}
+    real_commit = SASession.commit
+
+    def flaky_commit(self):
+        if state["boom"]:
+            state["boom"] = False
+            raise IntegrityError(
+                "INSERT INTO users ...", {},
+                Exception("UNIQUE constraint failed: index 'uq_users_email_ci'"),
+            )
+        return real_commit(self)
+
+    monkeypatch.setattr(SASession, "commit", flaky_commit)
+    r = admin_client.post("/api/admin/clients", json={"email": "race@x.com"})
+    assert r.status_code == 409
+    assert "already exists" in r.json()["detail"]
+
+
+def test_create_race_other_integrity_error_retries_then_succeeds(admin_client, db_session, no_email, monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.orm import Session as SASession
+
+    state = {"boom": True}
+    real_commit = SASession.commit
+
+    def flaky_commit(self):
+        if state["boom"]:
+            state["boom"] = False
+            raise IntegrityError(
+                "INSERT INTO users ...", {},
+                Exception("UNIQUE constraint failed: index 'uq_users_invite_token_hash'"),
+            )
+        return real_commit(self)
+
+    monkeypatch.setattr(SASession, "commit", flaky_commit)
+    r = admin_client.post("/api/admin/clients", json={"email": "retry@x.com"})
+    assert r.status_code == 201
+    row = _one(db_session, "retry@x.com")
+    assert row.status == "pending" and row.invite_token_hash is not None
