@@ -14,8 +14,10 @@ url_for_ini = settings.SQLALCHEMY_DATABASE_URL.replace("%", "%%")
 config.set_main_option("sqlalchemy.url", url_for_ini)
 
 # Interpret the config file for Python logging.
+# disable_existing_loggers=False: running a migration in-process (e.g. from a
+# test) must not silence the application's own loggers.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Provide your metadata to Alembic for autogenerate
 target_metadata = models.Base.metadata

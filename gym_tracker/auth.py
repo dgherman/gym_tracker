@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -8,7 +9,9 @@ from sqlalchemy.orm import Session
 
 from gym_tracker.config import get_settings
 from gym_tracker.database import SessionLocal
-from gym_tracker import models  # expects a models.User (see migration notes below)
+from gym_tracker import crud, models  # expects a models.User (see migration notes below)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 settings = get_settings()
@@ -66,34 +69,52 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
     if not google_sub:
         raise HTTPException(status_code=401, detail="Missing Google subject (sub)")
 
-    # Optional allowlist (useful while testing)
-    allowed = settings.allowed_emails_set
-    if allowed and email not in allowed:
-        raise HTTPException(status_code=403, detail="Email not allowed")
-
-    # Upsert user by google_sub
-    now = datetime.utcnow()
-    user = db.query(models.User).filter(models.User.google_sub == google_sub).one_or_none()
-    if user:
-        # Keep existing values if Google omits them
-        user.email = email or user.email
-        user.email_verified = email_verified
-        user.full_name = full_name or user.full_name
-        user.avatar_url = avatar_url or user.avatar_url
-        user.last_login_at = now
-    else:
-        user = models.User(
-            google_sub=google_sub,
-            email=email,
-            email_verified=email_verified,
-            full_name=full_name,
-            avatar_url=avatar_url,
-            role="client",       # placeholder for future RBAC
-            is_active=True,
-            created_at=now,
-            last_login_at=now,
+    # Login eligibility is governed by a users row matched on email (spec 5.3).
+    # There is no self-service signup: an account exists only because an admin
+    # invited it. `status` is the single source of truth for "can log in".
+    user, ambiguous = crud.find_user_by_email_ci(db, email)
+    if ambiguous:
+        logger.error(
+            "OAuth login blocked: %r matches multiple users rows (case-insensitive)",
+            email,
         )
-        db.add(user)
+        raise HTTPException(
+            status_code=403,
+            detail="Account configuration error, contact an administrator.",
+        )
+
+    if user is None:
+        raise HTTPException(status_code=403, detail="This email has not been invited.")
+    if user.status == "pending":
+        raise HTTPException(
+            status_code=403,
+            detail="Please confirm your invitation from the email we sent you before signing in.",
+        )
+    if user.status == "disabled":
+        raise HTTPException(status_code=403, detail="Access for this account has been revoked.")
+    # `status` is an unconstrained VARCHAR: fail closed on anything that is not
+    # explicitly "active" (empty string, a typo, a future value we do not know).
+    if user.status != "active":
+        raise HTTPException(status_code=403, detail="Access for this account is not active.")
+
+    # status == "active" — safe to bind / accept the Google identity now.
+    if user.google_sub is None:
+        # First login for an invited account: bind this Google identity.
+        user.google_sub = google_sub
+    elif user.google_sub != google_sub:
+        raise HTTPException(
+            status_code=403, detail="This email is linked to a different Google account."
+        )
+
+    now = datetime.utcnow()
+    user.email = email or user.email
+    user.email_verified = email_verified
+    user.full_name = full_name or user.full_name
+    user.avatar_url = avatar_url or user.avatar_url
+    user.last_login_at = now
+    user.is_active = True  # keep the legacy flag in sync with status
+    if user.confirmed_at is None:
+        user.confirmed_at = now
 
     db.commit()
     db.refresh(user)

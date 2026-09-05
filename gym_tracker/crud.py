@@ -8,6 +8,27 @@ from gym_tracker import models, schemas
 from gym_tracker import activities as activities_mod
 
 
+def find_user_by_email_ci(db: Session, email: Optional[str]):
+    """Case-insensitive lookup of a users row by email.
+
+    Returns ``(user_or_none, ambiguous)``. ``ambiguous`` is True when more than
+    one row matches (a data-integrity problem the DB-level ``uq_users_email_ci``
+    invariant is meant to prevent, but legacy data or a mismatched collation
+    could still produce). Callers MUST fail closed on ``ambiguous`` rather than
+    pick a row. Never raises ``MultipleResultsFound``.
+    """
+    if not email:
+        return None, False
+    rows = (
+        db.query(models.User)
+        .filter(func.lower(models.User.email) == email.strip().lower())
+        .all()
+    )
+    if len(rows) > 1:
+        return None, True
+    return (rows[0] if rows else None), False
+
+
 def _user_purchase_filter(user_id: int):
     """Filter purchases where user is owner OR partner."""
     return or_(
@@ -54,13 +75,15 @@ def user_can_edit_session(session, purchase, user_id) -> bool:
 
 
 def _resolve_partner(db: Session, partner_email: Optional[str]) -> Optional[int]:
-    """Look up a user by email. Returns user ID or None."""
-    if not partner_email:
+    """Look up a user by email (case-insensitive). Returns user ID or None.
+
+    Fails closed: if the email matches more than one row (dirty data), do not
+    link to an arbitrary one -- return None so the caller skips partner linking.
+    """
+    user, ambiguous = find_user_by_email_ci(db, partner_email)
+    if ambiguous or user is None:
         return None
-    user = db.query(models.User).filter(
-        models.User.email == partner_email.lower().strip()
-    ).first()
-    return user.id if user else None
+    return user.id
 
 
 def _annotate_purchases(db, purchases, user_id: int):

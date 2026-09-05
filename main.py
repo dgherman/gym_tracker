@@ -1,13 +1,15 @@
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -17,6 +19,10 @@ from gym_tracker import crud, models, progress, progress_entries, schemas
 from gym_tracker.auth import router as auth_router
 from gym_tracker.config import get_settings
 from gym_tracker.database import SessionLocal, engine
+from gym_tracker.email import EmailSendError, send_invite_email
+from gym_tracker.invites import generate_token, hash_token
+
+logger = logging.getLogger(__name__)
 
 # -------------------------------------------------------------
 # App setup
@@ -35,6 +41,7 @@ PUBLIC_PATHS = {
     "/me",  # keep public if you use it for debugging
     "/privacy",
     "/terms",
+    "/invite/confirm",  # public: consume an invite token (no session required)
     "/dev/login",  # dev-only login bypass (gated by DEV_LOGIN env var; see route)
 }
 
@@ -161,8 +168,11 @@ def healthz():
 def dev_login(request: Request, db: Session = Depends(get_db)):
     if os.getenv("DEV_LOGIN", "").lower() not in ("1", "true", "yes"):
         raise HTTPException(status_code=404, detail="Not found")
-    email = os.getenv("DEV_LOGIN_EMAIL", "dev@example.com")
-    user = db.query(models.User).filter(models.User.email == email).first()
+    email = os.getenv("DEV_LOGIN_EMAIL", "dev@example.com").strip().lower()
+    user, ambiguous = crud.find_user_by_email_ci(db, email)
+    if ambiguous:
+        logger.error("dev_login refused: %r matches multiple users rows", email)
+        raise HTTPException(status_code=409, detail="DEV_LOGIN_EMAIL matches multiple users")
     if not user:
         user = models.User(
             google_sub=f"dev-{email}",
@@ -201,6 +211,43 @@ def terms_of_service(request: Request, db: Session = Depends(get_db)):
         "current_user": user,
         "last_updated": "September 29, 2025"
     })
+
+
+# -------------------------------------------------------------
+# Public invite confirmation (spec 5.6) — no auth dependency
+# -------------------------------------------------------------
+@app.get("/invite/confirm", response_class=HTMLResponse)
+def invite_confirm(request: Request, db: Session = Depends(get_db)):
+    """Consume an invite token: flip the matching pending row to active.
+
+    Idempotent from the user's point of view — an unknown, already-used, or
+    no-longer-pending token renders the 'invalid or already used' page. The
+    page is returned with HTTP 200 (it is a page, not an API).
+    """
+    token = request.query_params.get("token", "")
+    row = None
+    if token:
+        row = (
+            db.query(models.User)
+            .filter(
+                models.User.invite_token_hash == hash_token(token),
+                models.User.status == "pending",
+            )
+            .one_or_none()
+        )
+    if row is None:
+        return templates.TemplateResponse(
+            request, "invite_invalid.html", {"current_user": None}
+        )
+
+    row.status = "active"
+    row.confirmed_at = datetime.utcnow()
+    row.invite_token_hash = None
+    row.is_active = True
+    db.commit()
+    return templates.TemplateResponse(
+        request, "invite_confirmed.html", {"current_user": None}
+    )
 
 # -------------------------------------------------------------
 # Summary endpoint (scoped)
@@ -841,4 +888,216 @@ def admin_activities(
         request,
         "admin/activities.html",
         {"current_user": admin_user, "categories": categories},
+    )
+
+
+# -------------------------------------------------------------
+# Client Management (admin console) — page + API (spec 5.4 / 5.5)
+# -------------------------------------------------------------
+
+class ClientCreate(BaseModel):
+    email: str
+    name: Optional[str] = None
+
+
+def build_confirm_url(request: Request, raw_token: str) -> str:
+    """Absolute URL for the emailed confirmation link.
+
+    Prefer an explicit APP_BASE_URL in production; otherwise derive from the
+    incoming request. Strip a trailing slash from whichever base is chosen so a
+    configured "https://host/" does not yield "https://host//invite/confirm".
+    """
+    base = (settings.APP_BASE_URL or str(request.base_url)).rstrip("/")
+    return f"{base}/invite/confirm?token={raw_token}"
+
+
+def _clients_ordered(db: Session):
+    """Query for role='client' rows, newest invite first.
+
+    Ordering is expressed portably: `invited_at IS NULL` (a boolean, sorts
+    False < True so non-NULL rows come first) then `invited_at DESC` then
+    `id DESC`. Avoids `.nullslast()`, which compiles to `DESC NULLS LAST` and
+    is rejected by MySQL.
+    """
+    return (
+        db.query(models.User)
+        .filter(models.User.role == "client")
+        .order_by(
+            models.User.invited_at.is_(None),
+            models.User.invited_at.desc(),
+            models.User.id.desc(),
+        )
+    )
+
+
+def _get_client_row(db: Session, client_id: int) -> models.User:
+    row = db.get(models.User, client_id)
+    if row is None or row.role != "client":
+        raise HTTPException(status_code=404, detail="Client not found")
+    return row
+
+
+_DUP_EMAIL_DETAIL = "A user with that email already exists"
+
+
+def _is_email_uniqueness_error(exc: IntegrityError) -> bool:
+    """True when an IntegrityError is the case-insensitive email uniqueness
+    violation (MySQL constraint or the SQLite functional index), regardless of
+    dialect wording."""
+    return "uq_users_email_ci" in str(getattr(exc, "orig", exc)).lower()
+
+
+def _persist_new_client(db: Session, row: models.User, admin_id: int) -> str:
+    """Commit a new pending client row with a fresh invite token; return the raw
+    token.
+
+    Concurrency: the CI pre-check in the caller is not atomic, so two requests
+    can both reach here. `uq_users_email_ci` then makes the losing commit raise
+    IntegrityError. Handle it: on the email-uniqueness violation (or if a row now
+    exists) -> 409, matching the normal duplicate path; on any other
+    IntegrityError (e.g. an invite_token_hash collision) regenerate the token and
+    retry once, then re-raise so nothing is swallowed silently.
+    """
+    for attempt in (1, 2):
+        raw = generate_token()
+        row.invite_token_hash = hash_token(raw)
+        row.invited_at = datetime.utcnow()
+        row.invited_by_id = admin_id
+        db.add(row)
+        try:
+            db.commit()
+            db.refresh(row)
+            return raw
+        except IntegrityError as exc:
+            db.rollback()
+            existing, ambiguous = crud.find_user_by_email_ci(db, row.email)
+            if existing or ambiguous or _is_email_uniqueness_error(exc):
+                logger.warning("Client create lost the race for %r: %s", row.email, exc)
+                raise HTTPException(status_code=409, detail=_DUP_EMAIL_DETAIL)
+            if attempt == 2:
+                raise
+            logger.warning("Client create IntegrityError (retrying with new token): %s", exc)
+    raise RuntimeError("unreachable")  # pragma: no cover
+
+
+def _issue_invite(db: Session, row: models.User, request: Request, admin_id: int) -> dict:
+    """Rotate the invite token on `row`, COMMIT, then send the email.
+
+    Store-hash-then-send: the row and its new token are persisted before any
+    outbound call, so a send failure (or a crash mid-send) can never leave a
+    live confirm link with no matching row. A send failure is non-fatal — the
+    committed row keeps its token and the response carries a `warning` field so
+    the UI can offer 'Resend'.
+    """
+    raw = generate_token()
+    row.invite_token_hash = hash_token(raw)
+    row.invited_at = datetime.utcnow()
+    row.invited_by_id = admin_id
+    db.commit()
+    db.refresh(row)
+
+    body = {"id": row.id, "status": row.status}
+    try:
+        send_invite_email(row.email, build_confirm_url(request, raw), to_name=row.full_name)
+    except EmailSendError as exc:
+        body["warning"] = str(exc)
+    return body
+
+
+@app.post("/api/admin/clients", status_code=201)
+def admin_create_client(
+    payload: ClientCreate,
+    request: Request,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    email = (payload.email or "").strip().lower()
+    if not email or "@" not in email or email.startswith("@") or email.endswith("@"):
+        raise HTTPException(status_code=400, detail="A valid email address is required")
+    exists, ambiguous = crud.find_user_by_email_ci(db, email)
+    if ambiguous:
+        logger.error("Client create blocked: %r matches multiple users rows", email)
+        raise HTTPException(
+            status_code=409,
+            detail="Multiple accounts already use that email; contact an administrator",
+        )
+    if exists:
+        raise HTTPException(status_code=409, detail=_DUP_EMAIL_DETAIL)
+
+    row = models.User(
+        email=email,
+        google_sub=None,
+        role="client",
+        status="pending",
+        full_name=(payload.name or None),
+        email_verified=False,
+        is_active=False,
+        invited_by_id=admin_user.id,
+        invited_at=datetime.utcnow(),
+    )
+    # store-hash-then-send: persist the row + token (race-safe) before emailing.
+    raw = _persist_new_client(db, row, admin_user.id)
+    body = {"id": row.id, "status": row.status}
+    try:
+        send_invite_email(row.email, build_confirm_url(request, raw), to_name=row.full_name)
+    except EmailSendError as exc:
+        body["warning"] = str(exc)
+    return JSONResponse(status_code=201, content=body)
+
+
+@app.post("/api/admin/clients/{client_id}/resend")
+def admin_resend_client(
+    client_id: int,
+    request: Request,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    row = _get_client_row(db, client_id)
+    if row.status != "pending":
+        raise HTTPException(status_code=409, detail="Only a pending invitation can be resent")
+    return _issue_invite(db, row, request, admin_user.id)  # commits, then sends
+
+
+@app.post("/api/admin/clients/{client_id}/disable")
+def admin_disable_client(
+    client_id: int,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    row = _get_client_row(db, client_id)
+    # Soft-disable only. Historical data (purchases/sessions/progress) is retained.
+    row.status = "disabled"
+    row.is_active = False
+    db.commit()
+    return {"id": row.id, "status": row.status}
+
+
+@app.post("/api/admin/clients/{client_id}/reinvite")
+def admin_reinvite_client(
+    client_id: int,
+    request: Request,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    row = _get_client_row(db, client_id)
+    if row.status != "disabled":
+        raise HTTPException(status_code=409, detail="Only a disabled client can be re-invited")
+    row.status = "pending"
+    row.confirmed_at = None
+    row.is_active = False
+    return _issue_invite(db, row, request, admin_user.id)  # commits status + token, then sends
+
+
+@app.get("/admin/clients", response_class=HTMLResponse)
+def admin_clients(
+    request: Request,
+    admin_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin client management page — lists role='client' rows only."""
+    clients = _clients_ordered(db).all()
+    return templates.TemplateResponse(
+        request,
+        "admin/clients.html",
+        {"current_user": admin_user, "clients": clients},
     )
