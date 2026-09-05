@@ -8,6 +8,27 @@ from gym_tracker import models, schemas
 from gym_tracker import activities as activities_mod
 
 
+def find_user_by_email_ci(db: Session, email: Optional[str]):
+    """Case-insensitive lookup of a users row by email.
+
+    Returns ``(user_or_none, ambiguous)``. ``ambiguous`` is True when more than
+    one row matches (a data-integrity problem the DB-level ``uq_users_email_ci``
+    invariant is meant to prevent, but legacy data or a mismatched collation
+    could still produce). Callers MUST fail closed on ``ambiguous`` rather than
+    pick a row. Never raises ``MultipleResultsFound``.
+    """
+    if not email:
+        return None, False
+    rows = (
+        db.query(models.User)
+        .filter(func.lower(models.User.email) == email.strip().lower())
+        .all()
+    )
+    if len(rows) > 1:
+        return None, True
+    return (rows[0] if rows else None), False
+
+
 def _user_purchase_filter(user_id: int):
     """Filter purchases where user is owner OR partner."""
     return or_(

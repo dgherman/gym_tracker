@@ -29,6 +29,44 @@ def _override_get_db():
         d.close()
 
 
+# users table exactly as it stood *before* clientmgmt01 (no status / invite_*
+# columns; google_sub NOT NULL). Lets the migration tests exercise the real
+# "add 5 columns to a pre-migration table" path instead of stamping over the
+# current ORM schema.
+_LEGACY_USERS_DDL = """
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY,
+    google_sub VARCHAR(255) NOT NULL UNIQUE,
+    email VARCHAR(255),
+    email_verified BOOLEAN NOT NULL DEFAULT 0,
+    full_name VARCHAR(255),
+    avatar_url VARCHAR(512),
+    role VARCHAR(50) NOT NULL DEFAULT 'client',
+    is_active BOOLEAN NOT NULL DEFAULT 1,
+    created_at DATETIME NOT NULL,
+    last_login_at DATETIME NOT NULL
+)
+"""
+
+
+def _make_legacy_db(url):
+    eng = create_engine(url)
+    with eng.begin() as conn:
+        conn.execute(text(_LEGACY_USERS_DDL))
+        conn.execute(text("CREATE INDEX ix_users_email ON users (email)"))
+    return eng
+
+
+def _run_clientmgmt01(url):
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config("alembic.ini")
+    cfg.set_main_option("sqlalchemy.url", url)
+    command.stamp(cfg, "pe01standalone")
+    command.upgrade(cfg, "head")
+
+
 def _login(c, email):
     os.environ["DEV_LOGIN_EMAIL"] = email
     r = c.get("/dev/login", follow_redirects=False)
@@ -105,23 +143,21 @@ def test_pending_invite_row_roundtrips(db_session):
     assert got.google_sub is None
 
 
-def test_cutover_seeds_allowed_emails(tmp_path, monkeypatch):
+def test_cutover_adds_columns_and_seeds_allowed_emails(tmp_path, monkeypatch):
     from alembic import command
     from alembic.config import Config
 
-    db_path = tmp_path / "cutover.db"
-    url = f"sqlite:///{db_path}"
-    eng = create_engine(url)
-    # Build the *current* schema, then pretend the DB is at the pre-migration head
-    # so only the new client_management revision runs against it.
-    Base.metadata.create_all(bind=eng)
+    url = f"sqlite:///{tmp_path / 'cutover.db'}"
+    eng = _make_legacy_db(url)
     with eng.begin() as conn:
         conn.execute(text(
             "INSERT INTO users (google_sub, email, email_verified, role, is_active, "
-            "status, created_at, last_login_at) VALUES "
-            "('g-existing', 'existing@x.com', 0, 'client', 1, 'pending', "
+            "created_at, last_login_at) VALUES "
+            "('g-existing', 'existing@x.com', 0, 'client', 1, "
             "'2020-01-01 00:00:00', '2020-01-01 00:00:00')"
         ))
+    # Pre-migration table really lacks the invite columns.
+    assert "status" not in {c["name"] for c in sa_inspect(eng).get_columns("users")}
 
     monkeypatch.setenv("ALLOWED_EMAILS", "a@x.com, b@x.com, Existing@x.com, a@x.com, ")
     monkeypatch.setenv("SQLALCHEMY_DATABASE_URL", url)
@@ -133,15 +169,17 @@ def test_cutover_seeds_allowed_emails(tmp_path, monkeypatch):
         command.stamp(cfg, "pe01standalone")
         command.upgrade(cfg, "head")
 
+        cols = {c["name"] for c in sa_inspect(eng).get_columns("users")}
+        assert {"status", "invite_token_hash", "invited_by_id",
+                "invited_at", "confirmed_at"} <= cols
+
         with eng.connect() as conn:
             rows = list(conn.execute(text(
-                "SELECT email, google_sub, status FROM users ORDER BY email")))
+                "SELECT email, google_sub, status, confirmed_at FROM users ORDER BY email")))
 
-        # downgrade is reversible: invite columns are dropped, seeded rows kept,
-        # and a re-upgrade is idempotent.
+        # downgrade drops the invite columns; seeded rows are kept; re-upgrade works.
         command.downgrade(cfg, "pe01standalone")
-        after_down = sa_inspect(eng)
-        down_cols = {c["name"] for c in after_down.get_columns("users")}
+        down_cols = {c["name"] for c in sa_inspect(eng).get_columns("users")}
         assert "status" not in down_cols and "invite_token_hash" not in down_cols
         command.upgrade(cfg, "head")
     finally:
@@ -149,6 +187,7 @@ def test_cutover_seeds_allowed_emails(tmp_path, monkeypatch):
 
     by_email = {r[0]: r for r in rows}
     assert by_email["existing@x.com"][2] == "active"          # pre-existing row flipped
+    assert by_email["existing@x.com"][3] is not None          # confirmed_at backfilled
     assert by_email["a@x.com"][1] is None                     # google_sub NULL
     assert by_email["a@x.com"][2] == "active"
     assert by_email["b@x.com"][1] is None
@@ -156,6 +195,73 @@ def test_cutover_seeds_allowed_emails(tmp_path, monkeypatch):
     # case-insensitive dedupe: "Existing@x.com" did not create a second row
     assert sum(1 for r in rows if r[0] == "existing@x.com") == 1
     assert sum(1 for r in rows if r[0] == "a@x.com") == 1
+
+
+def test_migration_aborts_on_ci_duplicate_emails(tmp_path, monkeypatch):
+    from alembic import command
+    from alembic.config import Config
+
+    url = f"sqlite:///{tmp_path / 'dups.db'}"
+    eng = _make_legacy_db(url)
+    with eng.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO users (google_sub, email, email_verified, role, is_active, "
+            "created_at, last_login_at) VALUES "
+            "('g1', 'Dup@X.com', 0, 'client', 1, '2020-01-01', '2020-01-01'), "
+            "('g2', 'dup@x.com', 0, 'client', 1, '2020-01-01', '2020-01-01')"
+        ))
+    monkeypatch.setenv("ALLOWED_EMAILS", "")
+    monkeypatch.setenv("SQLALCHEMY_DATABASE_URL", url)
+    monkeypatch.setenv("DATABASE_URL", url)
+    get_settings.cache_clear()
+    try:
+        cfg = Config("alembic.ini")
+        cfg.set_main_option("sqlalchemy.url", url)
+        command.stamp(cfg, "pe01standalone")
+        with pytest.raises(RuntimeError) as e:
+            command.upgrade(cfg, "head")
+        assert "dup@x.com" in str(e.value)
+        # rows untouched — migration must not delete or merge
+        with eng.connect() as conn:
+            assert conn.execute(text("SELECT COUNT(*) FROM users")).scalar() == 2
+    finally:
+        get_settings.cache_clear()
+
+
+def test_migration_enforces_ci_email_uniqueness(tmp_path, monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+
+    url = f"sqlite:///{tmp_path / 'ci.db'}"
+    eng = _make_legacy_db(url)
+    with eng.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO users (google_sub, email, email_verified, role, is_active, "
+            "created_at, last_login_at) VALUES "
+            "('g1', 'a@x.com', 0, 'client', 1, '2020-01-01', '2020-01-01')"
+        ))
+    monkeypatch.setenv("ALLOWED_EMAILS", "")
+    monkeypatch.setenv("SQLALCHEMY_DATABASE_URL", url)
+    monkeypatch.setenv("DATABASE_URL", url)
+    get_settings.cache_clear()
+    try:
+        _run_clientmgmt01(url)
+        with pytest.raises(IntegrityError):
+            with eng.begin() as conn:
+                conn.execute(text(
+                    "INSERT INTO users (google_sub, email, email_verified, role, is_active, "
+                    "status, created_at, last_login_at) VALUES "
+                    "('g2', 'A@X.com', 0, 'client', 1, 'pending', '2020-01-01', '2020-01-01')"
+                ))
+        # multiple NULL emails are still fine
+        with eng.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO users (google_sub, email, email_verified, role, is_active, "
+                "status, created_at, last_login_at) VALUES "
+                "('g3', NULL, 0, 'client', 1, 'pending', '2020-01-01', '2020-01-01'), "
+                "('g4', NULL, 0, 'client', 1, 'pending', '2020-01-01', '2020-01-01')"
+            ))
+    finally:
+        get_settings.cache_clear()
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +423,20 @@ def test_create_email_failure_still_creates_with_warning(admin_client, db_sessio
     r = admin_client.post("/api/admin/clients", json={"email": "f@x.com"})
     assert r.status_code == 201
     assert r.json().get("warning")
-    assert _one(db_session, "f@x.com").status == "pending"
+    row = _one(db_session, "f@x.com")
+    assert row.status == "pending"
+    # store-hash-then-send: the token is committed even though the email failed
+    assert row.invite_token_hash is not None
+
+
+def test_create_ci_duplicate_returns_409_not_500(admin_client, db_session, no_email):
+    db_session.add_all([
+        models.User(email="Same@Example.com", role="client", status="pending", google_sub=None),
+        models.User(email="same@example.com", role="client", status="pending", google_sub=None),
+    ])
+    db_session.commit()
+    r = admin_client.post("/api/admin/clients", json={"email": "SAME@example.com"})
+    assert r.status_code == 409
 
 
 def datetime_now():

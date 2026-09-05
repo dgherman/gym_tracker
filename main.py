@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,8 @@ from gym_tracker.config import get_settings
 from gym_tracker.database import SessionLocal, engine
 from gym_tracker.email import EmailSendError, send_invite_email
 from gym_tracker.invites import generate_token, hash_token
+
+logger = logging.getLogger(__name__)
 
 # -------------------------------------------------------------
 # App setup
@@ -959,11 +962,13 @@ def admin_create_client(
     email = (payload.email or "").strip().lower()
     if not email or "@" not in email or email.startswith("@") or email.endswith("@"):
         raise HTTPException(status_code=400, detail="A valid email address is required")
-    exists = (
-        db.query(models.User)
-        .filter(func.lower(models.User.email) == email)
-        .one_or_none()
-    )
+    exists, ambiguous = crud.find_user_by_email_ci(db, email)
+    if ambiguous:
+        logger.error("Client create blocked: %r matches multiple users rows", email)
+        raise HTTPException(
+            status_code=409,
+            detail="Multiple accounts already use that email; contact an administrator",
+        )
     if exists:
         raise HTTPException(status_code=409, detail="A user with that email already exists")
 

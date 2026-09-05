@@ -13,6 +13,10 @@ Schema:
   * add users.invited_by_id (INT NULL, FK users.id ON DELETE SET NULL)
   * add users.invited_at / users.confirmed_at (DATETIME NULL)
   * users.google_sub -> nullable (keep the unique index)
+  * users.email -> case-insensitive UNIQUE for non-NULL values
+    (``uq_users_email_ci``). Aborts with RuntimeError if the table already
+    holds case-insensitive duplicate emails -- a human must resolve those
+    first; this migration never deletes or merges rows.
 
 Data cutover (retire ALLOWED_EMAILS):
   * every existing users row -> status 'active', confirmed_at = created_at (or now)
@@ -56,10 +60,39 @@ def _has_invite_hash_unique(inspector) -> bool:
     )
 
 
+def _has_email_ci_unique(inspector) -> bool:
+    names = {c["name"] for c in inspector.get_unique_constraints("users")}
+    names |= {ix["name"] for ix in inspector.get_indexes("users")}
+    return "uq_users_email_ci" in names
+
+
+def _assert_no_ci_duplicate_emails(bind) -> None:
+    """Fail the migration if two rows already share an email case-insensitively.
+
+    We must not add the CI-uniqueness invariant on top of dirty data, and we
+    must not silently pick a winner. List the offenders and stop.
+    """
+    dups = bind.execute(sa.text(
+        "SELECT lower(email) AS e FROM users "
+        "WHERE email IS NOT NULL AND email <> '' "
+        "GROUP BY lower(email) HAVING COUNT(*) > 1"
+    )).fetchall()
+    if dups:
+        offenders = ", ".join(sorted(r[0] for r in dups))
+        raise RuntimeError(
+            "clientmgmt01 aborted: users.email has case-insensitive duplicate(s): "
+            f"{offenders}. Resolve these rows by hand (this migration will not "
+            "delete or merge users) and re-run."
+        )
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
     is_sqlite = bind.dialect.name == "sqlite"
+
+    # Guard BEFORE adding any uniqueness invariant.
+    _assert_no_ci_duplicate_emails(bind)
 
     existing = _existing_column_names(inspector)
     for name, column in _NEW_COLUMNS.items():
@@ -73,6 +106,19 @@ def upgrade() -> None:
             batch.alter_column("google_sub", existing_type=sa.String(255), nullable=True)
             if not _has_invite_hash_unique(inspector):
                 batch.create_unique_constraint("uq_users_invite_token_hash", ["invite_token_hash"])
+            existing_fks = {fk["name"] for fk in inspector.get_foreign_keys("users")}
+            if "fk_users_invited_by" not in existing_fks:
+                batch.create_foreign_key(
+                    "fk_users_invited_by", "users",
+                    ["invited_by_id"], ["id"], ondelete="SET NULL",
+                )
+        # Functional, partial unique index: case-insensitive uniqueness on
+        # non-NULL emails. Created after the batch recreate so it survives.
+        if not _has_email_ci_unique(sa.inspect(bind)):
+            op.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_ci "
+                "ON users (lower(email)) WHERE email IS NOT NULL"
+            )
     else:
         op.alter_column("users", "google_sub", existing_type=sa.String(length=255), nullable=True)
         if not _has_invite_hash_unique(inspector):
@@ -83,6 +129,11 @@ def upgrade() -> None:
                 "fk_users_invited_by", "users", "users",
                 ["invited_by_id"], ["id"], ondelete="SET NULL",
             )
+        # MySQL's default collation is case-insensitive and a unique index
+        # permits multiple NULLs, so a plain unique constraint on `email` gives
+        # us case-insensitive uniqueness for non-NULL values.
+        if not _has_email_ci_unique(inspector):
+            op.create_unique_constraint("uq_users_email_ci", "users", ["email"])
 
     _data_cutover(bind)
 
@@ -137,13 +188,16 @@ def downgrade() -> None:
     ).first() is not None
 
     if is_sqlite:
+        op.execute("DROP INDEX IF EXISTS uq_users_email_ci")
         with op.batch_alter_table("users", recreate="always") as batch:
+            batch.drop_constraint("fk_users_invited_by", type_="foreignkey")
             batch.drop_constraint("uq_users_invite_token_hash", type_="unique")
             if not has_null_sub:
                 batch.alter_column("google_sub", existing_type=sa.String(255), nullable=False)
             for name in _NEW_COLUMNS:
                 batch.drop_column(name)
     else:
+        op.drop_constraint("uq_users_email_ci", "users", type_="unique")
         op.drop_constraint("fk_users_invited_by", "users", type_="foreignkey")
         op.drop_constraint("uq_users_invite_token_hash", "users", type_="unique")
         if not has_null_sub:

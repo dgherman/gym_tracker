@@ -113,3 +113,13 @@ def test_empty_status_rejected(db_session, monkeypatch):
     with pytest.raises(HTTPException) as e:
         call_callback({"email": "e@x.com", "sub": "g1"}, db_session, monkeypatch)
     assert e.value.status_code == 403
+
+
+def test_ci_duplicate_emails_fail_closed_403(db_session, monkeypatch):
+    # Two rows share an email case-insensitively (dirty data the DB invariant
+    # normally prevents). Login must 403, not 500 from MultipleResultsFound.
+    _mk(db_session, email="Same@Example.com", google_sub="g1", status="active")
+    _mk(db_session, email="same@example.com", google_sub="g2", status="active")
+    with pytest.raises(HTTPException) as e:
+        call_callback({"email": "same@example.com", "sub": "g1"}, db_session, monkeypatch)
+    assert e.value.status_code == 403

@@ -1,15 +1,17 @@
+import logging
 from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from starlette.responses import RedirectResponse
 from authlib.integrations.starlette_client import OAuth
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from gym_tracker.config import get_settings
 from gym_tracker.database import SessionLocal
-from gym_tracker import models  # expects a models.User (see migration notes below)
+from gym_tracker import crud, models  # expects a models.User (see migration notes below)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 settings = get_settings()
@@ -70,13 +72,16 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
     # Login eligibility is governed by a users row matched on email (spec 5.3).
     # There is no self-service signup: an account exists only because an admin
     # invited it. `status` is the single source of truth for "can log in".
-    user = (
-        db.query(models.User)
-        .filter(func.lower(models.User.email) == email)
-        .one_or_none()
-        if email
-        else None
-    )
+    user, ambiguous = crud.find_user_by_email_ci(db, email)
+    if ambiguous:
+        logger.error(
+            "OAuth login blocked: %r matches multiple users rows (case-insensitive)",
+            email,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Account configuration error, contact an administrator.",
+        )
 
     if user is None:
         raise HTTPException(status_code=403, detail="This email has not been invited.")

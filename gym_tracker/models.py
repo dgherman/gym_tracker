@@ -29,6 +29,12 @@ class User(Base):
     google_sub = Column(String(255), unique=True, index=True, nullable=True)
 
     # Profile
+    # NOTE: migration `clientmgmt01` also enforces case-insensitive uniqueness on
+    # non-NULL `email` (`uq_users_email_ci`) at the DB level — a plain UNIQUE on
+    # MySQL (CI collation, multiple NULLs allowed), a functional partial unique
+    # index `lower(email) WHERE email IS NOT NULL` on SQLite. Not expressed as an
+    # Index() here so the test suite (Base.metadata.create_all) can still seed
+    # dirty rows to exercise the fail-closed path in crud.find_user_by_email_ci.
     email = Column(String(255), index=True, nullable=True)
     email_verified = Column(Boolean, nullable=False, default=False)
     full_name = Column(String(255), nullable=True)
