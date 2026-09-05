@@ -151,12 +151,18 @@ Key helpers in `crud.py`:
 
 ## Authentication & Authorization
 
-1. **Auth flow**: Google OIDC via Authlib -> upsert user by `google_sub` -> auto-link partner purchases -> set session cookie
+1. **Auth flow**: Google OIDC via Authlib -> match a `users` row by email -> apply the invite decision table (below) -> auto-link partner purchases -> set session cookie
 2. **Session**: Signed cookie (`gt_session`) via Starlette SessionMiddleware
-3. **Middleware**: `LoginRequiredMiddleware` protects all routes except public paths (`/login`, `/auth/callback`, `/logout`, `/healthz`, `/privacy`, `/terms`, `/me`, `/dev/login`). Requests sending `Accept: application/json` bypass the browser login redirect.
+3. **Middleware**: `LoginRequiredMiddleware` protects all routes except public paths (`/login`, `/auth/callback`, `/logout`, `/healthz`, `/privacy`, `/terms`, `/me`, `/invite/confirm`, `/dev/login`). Requests sending `Accept: application/json` bypass the browser login redirect.
 4. **Roles**: `user.role` field — `"client"` (default) or `"admin"`
 5. **Admin guard**: `require_admin` FastAPI dependency on admin endpoints
-6. **Email allowlist**: Optional `ALLOWED_EMAILS` env var restricts who can sign up
+6. **Client management (replaces `ALLOWED_EMAILS`)**: An admin invites clients at `/admin/clients`. Each invite is a `users` row with `google_sub` NULL and `status = 'pending'`; a confirmation email (Resend, from `admin@gym.x-mas.ro`) carries a tokenized `/invite/confirm?token=...` link. Only the SHA-256 digest of the token is stored (`users.invite_token_hash`). Confirming flips the row to `status = 'active'` and clears the hash. The OAuth callback decision table on `users.status` / `users.google_sub`:
+   - no row, `pending`, or `disabled` -> `403`
+   - `active` and `google_sub` NULL -> bind this Google identity (first login) and proceed
+   - `active` and `google_sub` set but different -> `403`
+   - `active` and `google_sub` matches -> proceed
+
+   Row actions (all `require_admin`): `POST /api/admin/clients` (invite), `/{id}/resend` (pending only), `/{id}/disable` (idempotent soft-disable — login is revoked, all historical purchases/sessions/progress are retained), `/{id}/reinvite` (disabled only). A one-off Alembic revision (`clientmgmt01`) added the columns and migrated existing `ALLOWED_EMAILS` entries to active rows.
 7. **Data scoping**: All CRUD operations filter by `user_id` from session — users see their own data plus shared partner data
 
 ## API Routes
@@ -243,7 +249,17 @@ Key helpers in `crud.py`:
 | `GOOGLE_CLIENT_SECRET` | OAuth client secret |
 | `OAUTH_REDIRECT_URI` | OAuth callback URL |
 | `SESSION_SECRET` | Cookie signing key |
-| `ALLOWED_EMAILS` | Comma-separated email allowlist (optional) |
 | `BASE_URL` | Application base URL |
 | `DATABASE_URL` | Database connection string |
 | `DEV_LOGIN` | Dev-only: when truthy, enables `GET /dev/login` to auto-login a seeded admin (NEVER set in production) |
+| `EMAIL_ENABLED` | Gate real sending; default `false` -> the confirm URL is logged at INFO and no HTTP call is made |
+| `EMAIL_PROVIDER` | Transport selector; default `resend` (only provider implemented) |
+| `RESEND_API_KEY` | Resend API key (sending scope); default `""` |
+| `EMAIL_FROM` | `From` header; default `Gym Tracker <admin@gym.x-mas.ro>` |
+| `EMAIL_REPLY_TO` | `Reply-To` header; default `dumitru@x-mas.ro` |
+| `APP_BASE_URL` | Base URL for building the `/invite/confirm` link; default `""` -> derived from the request |
+
+> `ALLOWED_EMAILS` was removed. Login authorization now lives in the `users`
+> table (see Authentication & Authorization §6). A one-off migration
+> (`clientmgmt01`) seeded rows from the old `ALLOWED_EMAILS` value; after it
+> ships, remove `ALLOWED_EMAILS` from the deployment environment.
