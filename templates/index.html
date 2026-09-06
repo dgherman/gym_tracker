@@ -294,9 +294,11 @@
     document.getElementById('logSessionModal').addEventListener('show.bs.modal', () => {
       updateActivityPeople();
       const dt = document.getElementById('session-datetime');
-      const v = currentLocalDatetimeValue();
-      dt.value = v;
-      dt.max = v;
+      if (dt) {
+        const v = currentLocalDatetimeValue();
+        dt.value = v;
+        dt.max = v;
+      }
     });
 
     // Show log session modal
@@ -321,15 +323,17 @@
       const partnerEmail = document.getElementById('sessionPartnerEmail').value.trim();
       const numPeople = parseInt(select.selectedOptions[0]?.dataset.numPeople || '1');
       const dtInput = document.getElementById('session-datetime');
-      const dtLocal = dtInput.value;
+      const dtLocal = dtInput ? dtInput.value : '';
 
       if (!durationMinutes || !trainer) {
         alert('Please select both a package and a trainer');
         return;
       }
       if (!dtLocal) {
-        dtInput.classList.add('is-invalid');
-        dtInput.reportValidity();
+        if (dtInput) {
+          dtInput.classList.add('is-invalid');
+          dtInput.reportValidity();
+        }
         return;
       }
       dtInput.classList.remove('is-invalid');
@@ -427,7 +431,7 @@
       // Resolve once the given Bootstrap modal has finished animating in/out.
       const afterModal = (id, event, action) => () => {
         const el = document.getElementById(id);
-        if (!el) { action(); tour.moveNext(); return; }
+        if (!el) { tour.moveNext(); return; }
         el.addEventListener(event, () => tour.moveNext(), { once: true });
         action();
       };
