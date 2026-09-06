@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -194,7 +194,30 @@ def dev_login(request: Request, db: Session = Depends(get_db)):
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
-    return templates.TemplateResponse(request, "index.html", {"current_user": user})
+    show_onboarding = bool(
+        user is not None
+        and (user.onboarded_at is None or request.query_params.get("tour") == "1")
+    )
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {"current_user": user, "show_onboarding": show_onboarding},
+    )
+
+
+@app.post("/api/onboarding/complete", status_code=204)
+def onboarding_complete(request: Request, db: Session = Depends(get_db)):
+    """Mark the current user as onboarded. The ONLY writer of onboarded_at.
+
+    Idempotent: a second call is a no-op. Auth-guarded like other non-admin
+    /api/* routes; never invoked by the OAuth callback or /dev/login.
+    """
+    user = _require_user(request, db)
+    if user.onboarded_at is None:
+        user.onboarded_at = datetime.utcnow()
+        db.add(user)
+        db.commit()
+    return Response(status_code=204)
 
 @app.get("/privacy", response_class=HTMLResponse)
 def privacy_policy(request: Request, db: Session = Depends(get_db)):

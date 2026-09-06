@@ -75,6 +75,7 @@
             <span style="opacity:.7">{{ current_user.email or "no-email" }}</span>
           </div>
         </div>
+        <a class="gt-menu__value" href="/?tour=1" style="color:#ffffff; text-decoration:none">Show tips again</a>
         {% if current_user.role == "admin" %}
           <a class="gt-admin-link" href="/admin">Admin Console</a>
         {% endif %}

@@ -11,6 +11,7 @@
 </head>
 <body class="bg-light">
   {% include "_nav.html" %}
+  {% if show_onboarding %}<div data-onboarding="1" hidden></div>{% endif %}
   <div class="container py-4">
     <h1 class="mb-4">Gym Session Tracker</h1>
 

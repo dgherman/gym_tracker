@@ -162,3 +162,79 @@ def test_migration_backfills_existing_rows_and_defaults_new_rows_null(tmp_path, 
         assert "onboarded_at" not in down_cols
     finally:
         get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Task 5 — trigger marker, complete endpoint, replay link
+# ---------------------------------------------------------------------------
+
+def _set_onboarded(user_id, value):
+    db = TestSessionLocal()
+    try:
+        u = db.get(models.User, user_id)
+        u.onboarded_at = value
+        db.commit()
+    finally:
+        db.close()
+
+
+def _get_onboarded(user_id):
+    db = TestSessionLocal()
+    try:
+        return db.get(models.User, user_id).onboarded_at
+    finally:
+        db.close()
+
+
+def test_index_shows_marker_when_never_onboarded(app_client):
+    _login(app_client, "ob@x.com")
+    body = app_client.get("/").text
+    assert 'data-onboarding="1"' in body
+
+
+def test_index_no_marker_once_onboarded(app_client):
+    from datetime import datetime
+    _set_onboarded(app_client._ids["user"], datetime(2026, 1, 1, 0, 0, 0))
+    _login(app_client, "ob@x.com")
+    body = app_client.get("/").text
+    assert 'data-onboarding="1"' not in body
+
+
+def test_index_tour_query_forces_marker_for_onboarded_user(app_client):
+    from datetime import datetime
+    _set_onboarded(app_client._ids["user"], datetime(2026, 1, 1, 0, 0, 0))
+    _login(app_client, "ob@x.com")
+    body = app_client.get("/?tour=1").text
+    assert 'data-onboarding="1"' in body
+
+
+def test_complete_endpoint_sets_onboarded_at_once_idempotent(app_client):
+    _login(app_client, "ob@x.com")
+    assert _get_onboarded(app_client._ids["user"]) is None
+
+    r1 = app_client.post("/api/onboarding/complete")
+    assert r1.status_code == 204
+    first = _get_onboarded(app_client._ids["user"])
+    assert first is not None
+
+    r2 = app_client.post("/api/onboarding/complete")
+    assert r2.status_code == 204
+    assert _get_onboarded(app_client._ids["user"]) == first
+
+
+def test_complete_endpoint_requires_auth(app_client):
+    r = app_client.post("/api/onboarding/complete", headers={"accept": "application/json"})
+    assert r.status_code == 401
+
+
+def test_dev_login_does_not_set_onboarded_at(app_client):
+    _login(app_client, "ob@x.com")
+    assert _get_onboarded(app_client._ids["user"]) is None
+
+
+def test_nav_has_show_tips_again_link_for_authenticated_user(app_client):
+    _login(app_client, "ob@x.com")
+    body = app_client.get("/").text
+    assert 'href="/?tour=1"' in body
+    assert "Show tips again" in body
+
