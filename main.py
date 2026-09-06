@@ -903,11 +903,11 @@ class ClientCreate(BaseModel):
 def build_confirm_url(request: Request, raw_token: str) -> str:
     """Absolute URL for the emailed confirmation link.
 
-    Prefer an explicit APP_BASE_URL in production; otherwise derive from the
+    Prefer an explicit BASE_URL in production; otherwise derive from the
     incoming request. Strip a trailing slash from whichever base is chosen so a
     configured "https://host/" does not yield "https://host//invite/confirm".
     """
-    base = (settings.APP_BASE_URL or str(request.base_url)).rstrip("/")
+    base = (settings.BASE_URL or str(request.base_url)).rstrip("/")
     return f"{base}/invite/confirm?token={raw_token}"
 
 

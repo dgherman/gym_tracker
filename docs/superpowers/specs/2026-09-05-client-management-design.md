@@ -419,3 +419,5 @@ harmless.
 
 None blocking. Deferred: force-invalidating an active session on disable
 (currently only prevents future logins).
+
+> Note (2026-09-05): APP_BASE_URL was consolidated into BASE_URL — see 2026-09-05-ux-batch-onboarding-design.md.

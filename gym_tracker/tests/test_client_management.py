@@ -617,7 +617,7 @@ def test_clients_ordering_is_mysql_portable():
 
 def test_build_confirm_url_configured_base_no_double_slash(monkeypatch):
     import main
-    monkeypatch.setattr(main.settings, "APP_BASE_URL", "https://h/")
+    monkeypatch.setattr(main.settings, "BASE_URL", "https://h/")
     req = SimpleNamespace(base_url="http://ignored.example/")
     url = main.build_confirm_url(req, "TOK")
     assert url == "https://h/invite/confirm?token=TOK"
@@ -625,7 +625,7 @@ def test_build_confirm_url_configured_base_no_double_slash(monkeypatch):
 
 def test_build_confirm_url_request_fallback_no_double_slash(monkeypatch):
     import main
-    monkeypatch.setattr(main.settings, "APP_BASE_URL", "")
+    monkeypatch.setattr(main.settings, "BASE_URL", "")
     req = SimpleNamespace(base_url="http://testserver/")
     url = main.build_confirm_url(req, "TOK")
     assert url == "http://testserver/invite/confirm?token=TOK"

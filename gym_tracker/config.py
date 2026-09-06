@@ -58,8 +58,6 @@ class Settings:
         self.RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
         self.EMAIL_FROM: str     = os.getenv("EMAIL_FROM", "Gym Tracker <admin@gym.x-mas.ro>")
         self.EMAIL_REPLY_TO: str = os.getenv("EMAIL_REPLY_TO", "dumitru@x-mas.ro")
-        # Base URL for building the /invite/confirm link; empty -> derive from the request.
-        self.APP_BASE_URL: str   = os.getenv("APP_BASE_URL", "")
 
     @property
     def is_sqlite(self) -> bool:

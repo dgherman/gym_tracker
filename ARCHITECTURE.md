@@ -249,7 +249,7 @@ Key helpers in `crud.py`:
 | `GOOGLE_CLIENT_SECRET` | OAuth client secret |
 | `OAUTH_REDIRECT_URI` | OAuth callback URL |
 | `SESSION_SECRET` | Cookie signing key |
-| `BASE_URL` | Application base URL |
+| `BASE_URL` | Application base URL; also the base for the emailed `/invite/confirm` link (falls back to the incoming request host only when unset). Default `http://localhost:8000` |
 | `DATABASE_URL` | Database connection string |
 | `DEV_LOGIN` | Dev-only: when truthy, enables `GET /dev/login` to auto-login a seeded admin (NEVER set in production) |
 | `EMAIL_ENABLED` | Gate real sending; default `false` -> the confirm URL is logged at INFO and no HTTP call is made |
@@ -257,7 +257,6 @@ Key helpers in `crud.py`:
 | `RESEND_API_KEY` | Resend API key (sending scope); default `""` |
 | `EMAIL_FROM` | `From` header; default `Gym Tracker <admin@gym.x-mas.ro>` |
 | `EMAIL_REPLY_TO` | `Reply-To` header; default `dumitru@x-mas.ro` |
-| `APP_BASE_URL` | Base URL for building the `/invite/confirm` link; default `""` -> derived from the request |
 
 > `ALLOWED_EMAILS` was removed. Login authorization now lives in the `users`
 > table (see Authentication & Authorization §6). A one-off migration
