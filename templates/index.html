@@ -443,17 +443,17 @@
         { element: '#buyPackageBtn', popover: {
             title: 'Purchase a package first',
             description: 'Buy a block of sessions before you can log any. Click Next to open the purchase form.',
-            side: 'bottom' },
-          onNextClick: afterModal('purchasePackageModal', 'shown.bs.modal', () => purchasePackageModal.show()) },
+            side: 'bottom',
+            onNextClick: afterModal('purchasePackageModal', 'shown.bs.modal', () => purchasePackageModal.show()) } },
         { element: '#purchasePackageSelect', popover: {
             title: 'Pick a package',
-            description: 'Choose a package, then confirm with the Purchase Package button. Next closes this form.' },
-          onNextClick: afterModal('purchasePackageModal', 'hidden.bs.modal', () => purchasePackageModal.hide()) },
+            description: 'Choose a package, then confirm with the Purchase Package button. Next closes this form.',
+            onNextClick: afterModal('purchasePackageModal', 'hidden.bs.modal', () => purchasePackageModal.hide()) } },
         { element: '#logSessionBtn', popover: {
             title: 'Log a session',
             description: 'Once you own a package, record each session here. Click Next to open the log form.',
-            side: 'bottom' },
-          onNextClick: afterModal('logSessionModal', 'shown.bs.modal', () => logSessionModal.show()) },
+            side: 'bottom',
+            onNextClick: afterModal('logSessionModal', 'shown.bs.modal', () => logSessionModal.show()) } },
         { element: '#session-datetime', popover: {
             title: 'Session date & time',
             description: 'Defaults to now. Change it to log a past session — future times are not allowed.' } },
@@ -468,8 +468,8 @@
             description: 'For a 2-person package, name the training partner for this session.' } },
         { element: '#activitySection', popover: {
             title: 'Activities (optional)',
-            description: 'Optionally log exercises, sets and reps. Next closes this form.' },
-          onNextClick: afterModal('logSessionModal', 'hidden.bs.modal', () => logSessionModal.hide()) },
+            description: 'Optionally log exercises, sets and reps. Next closes this form.',
+            onNextClick: afterModal('logSessionModal', 'hidden.bs.modal', () => logSessionModal.hide()) } },
         { element: 'a[href="/reports"]', popover: {
             title: 'Reports',
             description: 'Charts of your training volume, spend and progress over time.' } },
