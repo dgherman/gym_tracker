@@ -8,6 +8,19 @@ from gym_tracker import models, schemas
 from gym_tracker import activities as activities_mod
 
 
+def to_naive_utc(dt: datetime) -> datetime:
+    """Normalize a datetime to naive UTC for storage/comparison.
+
+    An aware value is converted to UTC and stripped of tzinfo; a naive value is
+    assumed to already be UTC and returned unchanged. Matches the naive-UTC
+    convention of ``Session.session_date`` and History's ``new Date(s + 'Z')``
+    render.
+    """
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 def find_user_by_email_ci(db: Session, email: Optional[str]):
     """Case-insensitive lookup of a users row by email.
 
@@ -299,6 +312,7 @@ def create_session(
     partner_email: Optional[str] = None,
     num_people: int = 1,
     activities: Optional[list] = None,
+    session_date: Optional[datetime] = None,
 ):
     """
     Creates a session by consuming one matching purchase (oldest first),
@@ -328,12 +342,17 @@ def create_session(
     if partner_email:
         session_partner_id = _resolve_partner(db, partner_email)
 
+    if session_date is not None:
+        resolved_date = to_naive_utc(session_date)
+    else:
+        resolved_date = datetime.now(timezone.utc).replace(tzinfo=None)
+
     purchase.sessions_remaining -= 1
     db_session = models.Session(
         purchase_id=purchase.id,
         duration_minutes=duration_minutes,
         trainer=trainer,
-        session_date=datetime.now(timezone.utc),
+        session_date=resolved_date,
         created_by_user_id=created_by_user_id,
         partner_user_id=session_partner_id,
     )

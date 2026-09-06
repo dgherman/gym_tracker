@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 
@@ -268,6 +268,10 @@ def create_session(
     db: Session = Depends(get_db),
 ):
     user_id = request.session.get("user_id")
+    if session_in.session_date is not None:
+        resolved = crud.to_naive_utc(session_in.session_date)
+        if resolved > datetime.utcnow() + timedelta(minutes=5):
+            raise HTTPException(status_code=422, detail="Session date cannot be in the future.")
     try:
         return crud.create_session(
             db,
@@ -277,6 +281,7 @@ def create_session(
             partner_email=session_in.partner_email,
             num_people=session_in.num_people,
             activities=session_in.activities,
+            session_date=session_in.session_date,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

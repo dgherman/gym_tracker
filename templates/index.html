@@ -43,6 +43,11 @@
         </div>
         <div class="modal-body">
           <div class="mb-3">
+            <label for="session-datetime" class="form-label">Session date &amp; time</label>
+            <input type="datetime-local" class="form-control" id="session-datetime" required>
+            <div class="form-text">Defaults to now. Pick an earlier time to log a past session.</div>
+          </div>
+          <div class="mb-3">
             <label for="sessionPackageSelect" class="form-label">Select Package</label>
             <select id="sessionPackageSelect" class="form-select" required>
               <option value="">-- Select a package --</option>
@@ -274,9 +279,21 @@
       updateActivityPeople();
     });
 
-    // Sync activity section people state whenever the log-session modal opens
+    // Current local time truncated to whole minutes, as a datetime-local value.
+    function currentLocalDatetimeValue() {
+      const now = new Date();
+      now.setSeconds(0, 0);
+      return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    }
+
+    // Sync activity section people state + default the date/time whenever the
+    // log-session modal opens.
     document.getElementById('logSessionModal').addEventListener('show.bs.modal', () => {
       updateActivityPeople();
+      const dt = document.getElementById('session-datetime');
+      const v = currentLocalDatetimeValue();
+      dt.value = v;
+      dt.max = v;
     });
 
     // Show log session modal
@@ -300,15 +317,24 @@
       const trainer = document.getElementById('modalTrainerSelect').value;
       const partnerEmail = document.getElementById('sessionPartnerEmail').value.trim();
       const numPeople = parseInt(select.selectedOptions[0]?.dataset.numPeople || '1');
+      const dtInput = document.getElementById('session-datetime');
+      const dtLocal = dtInput.value;
 
       if (!durationMinutes || !trainer) {
         alert('Please select both a package and a trainer');
         return;
       }
+      if (!dtLocal) {
+        dtInput.classList.add('is-invalid');
+        dtInput.reportValidity();
+        return;
+      }
+      dtInput.classList.remove('is-invalid');
 
       logSessionModal.hide();
 
       const payload = { duration_minutes: durationMinutes, trainer, num_people: numPeople };
+      payload.session_date = new Date(dtLocal).toISOString();
       if (partnerEmail) {
         payload.partner_email = partnerEmail;
       }
