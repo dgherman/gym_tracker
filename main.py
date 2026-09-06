@@ -1,11 +1,11 @@
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -194,7 +194,30 @@ def dev_login(request: Request, db: Session = Depends(get_db)):
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
-    return templates.TemplateResponse(request, "index.html", {"current_user": user})
+    show_onboarding = bool(
+        user is not None
+        and (user.onboarded_at is None or request.query_params.get("tour") == "1")
+    )
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {"current_user": user, "show_onboarding": show_onboarding},
+    )
+
+
+@app.post("/api/onboarding/complete", status_code=204)
+def onboarding_complete(request: Request, db: Session = Depends(get_db)):
+    """Mark the current user as onboarded. The ONLY writer of onboarded_at.
+
+    Idempotent: a second call is a no-op. Auth-guarded like other non-admin
+    /api/* routes; never invoked by the OAuth callback or /dev/login.
+    """
+    user = _require_user(request, db)
+    if user.onboarded_at is None:
+        user.onboarded_at = datetime.utcnow()
+        db.add(user)
+        db.commit()
+    return Response(status_code=204)
 
 @app.get("/privacy", response_class=HTMLResponse)
 def privacy_policy(request: Request, db: Session = Depends(get_db)):
@@ -268,6 +291,10 @@ def create_session(
     db: Session = Depends(get_db),
 ):
     user_id = request.session.get("user_id")
+    if session_in.session_date is not None:
+        resolved = crud.to_naive_utc(session_in.session_date)
+        if resolved > datetime.utcnow() + timedelta(minutes=5):
+            raise HTTPException(status_code=422, detail="Session date cannot be in the future.")
     try:
         return crud.create_session(
             db,
@@ -277,6 +304,7 @@ def create_session(
             partner_email=session_in.partner_email,
             num_people=session_in.num_people,
             activities=session_in.activities,
+            session_date=session_in.session_date,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -903,11 +931,11 @@ class ClientCreate(BaseModel):
 def build_confirm_url(request: Request, raw_token: str) -> str:
     """Absolute URL for the emailed confirmation link.
 
-    Prefer an explicit APP_BASE_URL in production; otherwise derive from the
+    Prefer an explicit BASE_URL in production; otherwise derive from the
     incoming request. Strip a trailing slash from whichever base is chosen so a
     configured "https://host/" does not yield "https://host//invite/confirm".
     """
-    base = (settings.APP_BASE_URL or str(request.base_url)).rstrip("/")
+    base = (settings.BASE_URL or str(request.base_url)).rstrip("/")
     return f"{base}/invite/confirm?token={raw_token}"
 
 

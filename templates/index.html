@@ -8,9 +8,11 @@
     href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
     rel="stylesheet"
   >
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css">
 </head>
 <body class="bg-light">
   {% include "_nav.html" %}
+  {% if show_onboarding %}<div data-onboarding="1" hidden></div>{% endif %}
   <div class="container py-4">
     <h1 class="mb-4">Gym Session Tracker</h1>
 
@@ -42,6 +44,11 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
+          <div class="mb-3">
+            <label for="session-datetime" class="form-label">Session date &amp; time</label>
+            <input type="datetime-local" class="form-control" id="session-datetime" required>
+            <div class="form-text">Defaults to now. Pick an earlier time to log a past session.</div>
+          </div>
           <div class="mb-3">
             <label for="sessionPackageSelect" class="form-label">Select Package</label>
             <select id="sessionPackageSelect" class="form-select" required>
@@ -107,6 +114,7 @@
 
   <!-- Scripts -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js"></script>
   <script>
     window.CURRENT_USER_NAME = {{ ((current_user.full_name or current_user.email) if current_user else 'You') | tojson }};
   </script>
@@ -274,9 +282,23 @@
       updateActivityPeople();
     });
 
-    // Sync activity section people state whenever the log-session modal opens
+    // Current local time truncated to whole minutes, as a datetime-local value.
+    function currentLocalDatetimeValue() {
+      const now = new Date();
+      now.setSeconds(0, 0);
+      return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    }
+
+    // Sync activity section people state + default the date/time whenever the
+    // log-session modal opens.
     document.getElementById('logSessionModal').addEventListener('show.bs.modal', () => {
       updateActivityPeople();
+      const dt = document.getElementById('session-datetime');
+      if (dt) {
+        const v = currentLocalDatetimeValue();
+        dt.value = v;
+        dt.max = v;
+      }
     });
 
     // Show log session modal
@@ -300,15 +322,26 @@
       const trainer = document.getElementById('modalTrainerSelect').value;
       const partnerEmail = document.getElementById('sessionPartnerEmail').value.trim();
       const numPeople = parseInt(select.selectedOptions[0]?.dataset.numPeople || '1');
+      const dtInput = document.getElementById('session-datetime');
+      const dtLocal = dtInput ? dtInput.value : '';
 
       if (!durationMinutes || !trainer) {
         alert('Please select both a package and a trainer');
         return;
       }
+      if (!dtLocal) {
+        if (dtInput) {
+          dtInput.classList.add('is-invalid');
+          dtInput.reportValidity();
+        }
+        return;
+      }
+      dtInput.classList.remove('is-invalid');
 
       logSessionModal.hide();
 
       const payload = { duration_minutes: durationMinutes, trainer, num_people: numPeople };
+      payload.session_date = new Date(dtLocal).toISOString();
       if (partnerEmail) {
         payload.partner_email = partnerEmail;
       }
@@ -383,6 +416,91 @@
       refreshSummary();
     });
 
+    // ---------------------------------------------------------------------
+    // First-login onboarding tour (driver.js). Runs only when GET / rendered
+    // the onboarding marker element (new user, or /?tour=1 replay).
+    // Defensive: any missing target is skipped; the tour never blocks the page.
+    // ---------------------------------------------------------------------
+    function startOnboardingTour() {
+      if (!document.querySelector('[data-onboarding="1"]')) return;
+      if (!window.driver || !window.driver.js || !window.driver.js.driver) return;
+
+      const { driver } = window.driver.js;
+      let tour;
+
+      // Resolve once the given Bootstrap modal has finished animating in/out.
+      const afterModal = (id, event, action) => () => {
+        const el = document.getElementById(id);
+        if (!el) { tour.moveNext(); return; }
+        el.addEventListener(event, () => tour.moveNext(), { once: true });
+        action();
+      };
+
+      const rawSteps = [
+        { element: null, popover: {
+            title: 'Welcome to Gym Tracker',
+            description: 'Track training packages you buy and the sessions you use. Here is the 60-second tour.' } },
+        { element: '#buyPackageBtn', popover: {
+            title: 'Purchase a package first',
+            description: 'Buy a block of sessions before you can log any. Click Next to open the purchase form.',
+            side: 'bottom',
+            onNextClick: afterModal('purchasePackageModal', 'shown.bs.modal', () => purchasePackageModal.show()) } },
+        { element: '#purchasePackageSelect', popover: {
+            title: 'Pick a package',
+            description: 'Choose a package, then confirm with the Purchase Package button. Next closes this form.',
+            onNextClick: afterModal('purchasePackageModal', 'hidden.bs.modal', () => purchasePackageModal.hide()) } },
+        { element: '#logSessionBtn', popover: {
+            title: 'Log a session',
+            description: 'Once you own a package, record each session here. Click Next to open the log form.',
+            side: 'bottom',
+            onNextClick: afterModal('logSessionModal', 'shown.bs.modal', () => logSessionModal.show()) } },
+        { element: '#session-datetime', popover: {
+            title: 'Session date & time',
+            description: 'Defaults to now. Change it to log a past session — future times are not allowed.' } },
+        { element: '#sessionPackageSelect', popover: {
+            title: 'Which package',
+            description: 'Pick which purchased block this session draws from.' } },
+        { element: '#modalTrainerSelect', popover: {
+            title: 'Trainer',
+            description: 'Who trained you this session.' } },
+        { element: '#activitySection', popover: {
+            title: 'Activities (optional)',
+            description: 'Optionally log exercises, sets and reps. Next closes this form.',
+            onNextClick: afterModal('logSessionModal', 'hidden.bs.modal', () => logSessionModal.hide()) } },
+        { element: 'a[href="/reports"]', popover: {
+            title: 'Reports',
+            description: 'Charts of your training volume, spend and progress over time.' } },
+        { element: 'a[href="/history"]', popover: {
+            title: 'History',
+            description: 'Every past session and purchase; edit or review them here.' } },
+        { element: null, popover: {
+            title: "You're set",
+            description: 'Start with Purchase Package, then Log Session. You can reopen this tour from the menu.' } },
+      ];
+
+      // Skip steps whose anchor element is not present on this page.
+      const steps = rawSteps.filter(s => {
+        if (!s.element) return true;
+        if (typeof s.element === 'string') return !!document.querySelector(s.element);
+        return true;
+      });
+
+      let completed = false;
+      const markComplete = () => {
+        if (completed) return;
+        completed = true;
+        fetch('/api/onboarding/complete', { method: 'POST' }).catch(() => {});
+      };
+
+      tour = driver({
+        showProgress: true,
+        allowClose: true,
+        steps,
+        onDestroyed: markComplete,
+      });
+      tour.drive();
+    }
+
     // Initialize on page load
     document.addEventListener('DOMContentLoaded', async () => {
       await loadPackages();
@@ -390,6 +508,7 @@
       await refreshSummary();
       await ActivitySection.load();
       ActivitySection.init();
+      startOnboardingTour();
     });
   </script>
 </body>

@@ -15,6 +15,9 @@ class SessionCreate(BaseModel):
     trainer: str
     num_people: int = 1
     partner_email: str | None = None
+    # Optional client-supplied instant for retroactive logging. Client sends UTC
+    # ISO ("...Z"); a naive value is assumed to already be UTC. Omitted -> now.
+    session_date: datetime | None = None
     activities: list["SessionActivityInput"] = []
 
     @field_validator('trainer')

@@ -278,7 +278,7 @@ existing ones:
 | `RESEND_API_KEY`  | `""`                                      | Resend API key (sending scope). |
 | `EMAIL_FROM`      | `Gym Tracker <admin@gym.x-mas.ro>`        | `From` header. |
 | `EMAIL_REPLY_TO`  | `dumitru@x-mas.ro`                        | `Reply-To` header. |
-| `APP_BASE_URL`    | derive from request if unset, else `""`   | Base URL used to build `confirm_url` (`{APP_BASE_URL}/invite/confirm?token=...`). Prefer an explicit env value in production; fall back to `request.base_url` if empty. |
+| `BASE_URL`        | `http://localhost:8000`                   | Base URL used to build `confirm_url` (`{BASE_URL}/invite/confirm?token=...`). Prefer an explicit env value in production; fall back to `request.base_url` if empty. |
 
 `ALLOWED_EMAILS` is deleted from config after the cutover migration ships.
 
@@ -359,7 +359,7 @@ locally against a Docker build:
    matching Google account. Confirms schema, migration, callback matrix, and
    UI without sending mail.
 3. Second pass with `EMAIL_ENABLED=true` + the real `RESEND_API_KEY` and
-   `APP_BASE_URL` set to the locally reachable URL: add a client with a real
+   `BASE_URL` set to the locally reachable URL: add a client with a real
    address, confirm the email actually arrives from `admin@gym.x-mas.ro`,
    click the real link, sign in.
 4. Run `alembic downgrade` one step and re-`upgrade` against the local MySQL
@@ -373,7 +373,7 @@ Only after this passes locally, proceed to production.
 2. Deploy to the Oracle host. Container runs `alembic upgrade head`: columns
    added, existing users set active, `ALLOWED_EMAILS` entries migrated to
    rows.
-3. Set `EMAIL_ENABLED=true`, `RESEND_API_KEY=...`, `APP_BASE_URL=https://<prod
+3. Set `EMAIL_ENABLED=true`, `RESEND_API_KEY=...`, `BASE_URL=https://<prod
    host>` in the deployment environment. Redeploy / restart.
 4. Verify: admin opens `/admin/clients`, adds a throwaway address, receives
    the email, clicks confirm, signs in with the matching Google account.
@@ -419,3 +419,5 @@ harmless.
 
 None blocking. Deferred: force-invalidating an active session on disable
 (currently only prevents future logins).
+
+> Note (2026-09-05): APP_BASE_URL was consolidated into BASE_URL — see 2026-09-05-ux-batch-onboarding-design.md.

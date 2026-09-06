@@ -11,16 +11,13 @@
 </head>
 <body class="bg-light p-4">
   {% include "_nav.html" %}
-  <nav class="navbar navbar-light mb-4">
-    <a class="navbar-brand" href="/">Gym Tracker</a>
-  </nav>
+  <a href="/" class="btn btn-secondary mt-3 mb-3">Home</a>
   <h1 class="mb-4">History</h1>
 
   <!-- Date-range control (shared partial) -->
   {% include "_range_control.html" %}
 
   <div id="history-content"></div>
-  <a href="/" class="btn btn-secondary mt-4">Back</a>
 
   <!-- Edit Session Modal -->
   <div class="modal fade" id="editSessionModal" tabindex="-1" aria-hidden="true">

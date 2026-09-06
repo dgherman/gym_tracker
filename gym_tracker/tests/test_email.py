@@ -8,7 +8,7 @@ import pytest
 
 def test_email_settings_defaults(monkeypatch):
     for k in ["EMAIL_ENABLED", "EMAIL_PROVIDER", "RESEND_API_KEY",
-              "EMAIL_FROM", "EMAIL_REPLY_TO", "APP_BASE_URL"]:
+              "EMAIL_FROM", "EMAIL_REPLY_TO", "BASE_URL"]:
         monkeypatch.delenv(k, raising=False)
     from gym_tracker.config import Settings
     s = Settings()
@@ -17,7 +17,7 @@ def test_email_settings_defaults(monkeypatch):
     assert s.RESEND_API_KEY == ""
     assert s.EMAIL_FROM == "Gym Tracker <admin@gym.x-mas.ro>"
     assert s.EMAIL_REPLY_TO == "dumitru@x-mas.ro"
-    assert s.APP_BASE_URL == ""
+    assert s.BASE_URL == "http://localhost:8000"
 
 
 def test_email_enabled_truthy(monkeypatch):

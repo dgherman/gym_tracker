@@ -24,7 +24,7 @@
   - `RESEND_API_KEY` default `""`
   - `EMAIL_FROM` default `Gym Tracker <admin@gym.x-mas.ro>`
   - `EMAIL_REPLY_TO` default `dumitru@x-mas.ro`
-  - `APP_BASE_URL` default `""` (fall back to `request.base_url` when empty)
+  - `BASE_URL` (fall back to `request.base_url` when empty)
 - `EMAIL_ENABLED=false` MUST NOT make any outbound HTTP call; it logs the confirm URL at `INFO` instead.
 - Resend endpoint: `POST https://api.resend.com/emails`, header `Authorization: Bearer <RESEND_API_KEY>`, JSON body keys `from`, `to`, `reply_to`, `subject`, `text`, `html`.
 - All `/admin/clients` page and `/api/admin/clients*` routes use `Depends(require_admin)` (`main.py:95-102`).
@@ -180,14 +180,14 @@ git commit -m "feat(db): add client invite columns and cutover migration"
   - `RESEND_API_KEY: str`
   - `EMAIL_FROM: str`
   - `EMAIL_REPLY_TO: str`
-  - `APP_BASE_URL: str`
+  - `BASE_URL: str`
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 def test_email_settings_defaults(monkeypatch):
     for k in ["EMAIL_ENABLED","EMAIL_PROVIDER","RESEND_API_KEY",
-              "EMAIL_FROM","EMAIL_REPLY_TO","APP_BASE_URL"]:
+              "EMAIL_FROM","EMAIL_REPLY_TO","BASE_URL"]:
         monkeypatch.delenv(k, raising=False)
     from gym_tracker.config import Settings
     s = Settings()
@@ -195,7 +195,7 @@ def test_email_settings_defaults(monkeypatch):
     assert s.EMAIL_PROVIDER == "resend"
     assert s.EMAIL_FROM == "Gym Tracker <admin@gym.x-mas.ro>"
     assert s.EMAIL_REPLY_TO == "dumitru@x-mas.ro"
-    assert s.APP_BASE_URL == ""
+    assert s.BASE_URL == "http://localhost:8000"
 
 def test_email_enabled_truthy(monkeypatch):
     monkeypatch.setenv("EMAIL_ENABLED", "true")
@@ -534,13 +534,13 @@ git commit -m "feat(invite): public confirmation route flips pending to active"
 - Test: `gym_tracker/tests/test_client_management.py`
 
 **Interfaces:**
-- Consumes: `require_admin`, `send_invite_email` + `EmailSendError` (Task 3), `generate_token`/`hash_token` (Task 3), `APP_BASE_URL` setting (Task 2), `User` invite columns (Task 1).
+- Consumes: `require_admin`, `send_invite_email` + `EmailSendError` (Task 3), `generate_token`/`hash_token` (Task 3), `BASE_URL` setting (Task 2), `User` invite columns (Task 1).
 - Produces:
   - `POST /api/admin/clients` `{email, name?}` -> `201 {id, status, warning?}`
   - `POST /api/admin/clients/{id}/resend` -> `200`
   - `POST /api/admin/clients/{id}/disable` -> `200`
   - `POST /api/admin/clients/{id}/reinvite` -> `200`
-  - helper `build_confirm_url(request, raw_token) -> str` = `f"{APP_BASE_URL or str(request.base_url).rstrip('/')}/invite/confirm?token={raw_token}"`
+  - helper `build_confirm_url(request, raw_token) -> str` = `f"{(BASE_URL or str(request.base_url)).rstrip('/')}/invite/confirm?token={raw_token}"`
 
 - [ ] **Step 1: Write failing tests**
 
@@ -708,7 +708,7 @@ Replace the `ALLOWED_EMAILS` description with the Client Management model: admin
 
 - [ ] **Step 2: Update `.env.example`** (if present)
 
-Remove `ALLOWED_EMAILS`. Add `EMAIL_ENABLED=false`, `EMAIL_PROVIDER=resend`, `RESEND_API_KEY=`, `EMAIL_FROM=Gym Tracker <admin@gym.x-mas.ro>`, `EMAIL_REPLY_TO=dumitru@x-mas.ro`, `APP_BASE_URL=` with a one-line comment each.
+Remove `ALLOWED_EMAILS`. Add `EMAIL_ENABLED=false`, `EMAIL_PROVIDER=resend`, `RESEND_API_KEY=`, `EMAIL_FROM=Gym Tracker <admin@gym.x-mas.ro>`, `EMAIL_REPLY_TO=dumitru@x-mas.ro` with a one-line comment each. Ensure `BASE_URL` is set.
 
 - [ ] **Step 3: Grep for stragglers**
 
@@ -750,3 +750,5 @@ Do not merge. Cross-review follows.
 - **5.1 schema** -> Task 1. **5.2 cutover** -> Task 1 Steps 6/8. **5.3 callback table** -> Task 4 (one test per row). **5.4 UI** -> Task 7. **5.5 API** -> Task 6 (all four routes + 409 + non-admin + email-failure warning). **5.6 confirm** -> Task 5. **5.7 email module** -> Task 3. **5.8 config** -> Task 2 (+ removal in Task 4). **5.9 DNS** -> out of code scope, noted. **§6 testing** -> Tasks 1,3,4,5,6,7 test steps. **§7 rollout** -> Task 9 + spec.
 - **Type consistency:** `generate_token`/`hash_token` (Task 3) used verbatim in Tasks 5/6. `send_invite_email(to_email, confirm_url, *, to_name=None)` + `EmailSendError` (Task 3) used verbatim in Task 6. `User.status` string values `pending`/`active`/`disabled` consistent across Tasks 1,4,5,6,7. `build_confirm_url` defined in Task 6 Interfaces, used in Task 6 Step 3.
 - **Placeholder scan:** test bodies are concrete; the two `# ...` comments in Task 6 Step 1 (`add_all_helper_or_post`, inline transition comments) are illustrative shorthand for repeated CRUD setup already shown in sibling tests in the same step — acceptable, not a spec gap.
+
+> Note (2026-09-05): APP_BASE_URL was consolidated into BASE_URL — see 2026-09-05-ux-batch-onboarding-design.md.

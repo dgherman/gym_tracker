@@ -129,6 +129,11 @@ Four additional tables support optional structured activity logging per session:
 - **activities**: Global library. `UNIQUE(category_id, name)` plus case-insensitive dedup in CRUD (recreating a name returns/​reactivates the existing row). `created_by_user_id` tracks the originator; every activity is usable by all users. Soft-delete via `is_active`.
 - **session_activities**: One row per activity per session. `values` is a JSON object keyed by `category_fields.key`, validated server-side against the category's **active** fields at write time. Cascades on session delete via the ORM relationship (`cascade="all, delete-orphan"`). Includes optional `person_slot` column (1=owner, 2=partner, null=shared) for per-person activity tracking in couples sessions; legacy/single-person rows store `null` and render as "Both / Shared".
 
+Other `users` columns of note:
+- **`users.onboarded_at`** (nullable `DATETIME`): NULL until the user finishes or skips the first-login onboarding tour. Written **only** by `POST /api/onboarding/complete` — never by the OAuth callback or `/dev/login`. The adding migration (`onboard01`, `down_revision = clientmgmt01`) backfills every row that exists at upgrade time to a single `utcnow()` so established accounts never see the tour; `downgrade()` drops the column.
+
+`sessions.session_date` is a **naive-UTC** instant. `POST /sessions/` accepts an optional client-supplied `session_date` (UTC ISO, `...Z`) for retroactive logging: a past value is stored as that exact instant; a value more than 5 minutes past `utcnow()` is rejected with `422` and no row is written; omitting it stores ~now. `crud.to_naive_utc()` normalizes aware/naive input. (The History *edit* path still stores its `datetime-local` text as naive local — a pre-existing inconsistency, out of scope here.)
+
 ## Two-Person Session Sharing
 
 Packages with `num_people >= 2` support partner sharing:
@@ -170,7 +175,7 @@ Key helpers in `crud.py`:
 ### Pages (HTML, server-rendered)
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/` | yes | Dashboard |
+| GET | `/` | yes | Dashboard. Emits the onboarding-tour marker when `users.onboarded_at IS NULL` or `?tour=1` (replay) |
 | GET | `/history` | yes | Session/purchase history |
 | GET | `/reports` | yes | Analytics |
 | GET | `/admin` | admin | Admin dashboard |
@@ -192,7 +197,7 @@ Key helpers in `crud.py`:
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/summary/` | yes | Remaining sessions by (duration, num_people) |
-| POST | `/sessions/` | yes | Log a session (accepts partner_email, num_people) |
+| POST | `/sessions/` | yes | Log a session (accepts partner_email, num_people, optional `session_date` — UTC ISO, past only, >5-min future skew → 422) |
 | GET | `/history/sessions/` | yes | List user's sessions (incl. partner sessions) |
 | POST | `/history/api/edit/session/{id}` | yes | Edit session (owner only) |
 | POST | `/history/api/delete/session/{id}` | yes | Delete session (owner only) |
@@ -218,6 +223,7 @@ Key helpers in `crud.py`:
 | PATCH | `/api/admin/categories/{id}/fields/{fid}` | admin | Update field |
 | DELETE | `/api/admin/categories/{id}/fields/{fid}` | admin | Soft-delete field |
 | PATCH | `/api/admin/activities/{id}` | admin | Rename / soft-delete activity |
+| POST | `/api/onboarding/complete` | yes | Mark the current user onboarded — returns `204`, sets `onboarded_at` once (idempotent). The only writer of that column |
 | GET | `/healthz` | no | Health check |
 
 `POST /sessions/` and `POST /history/api/edit/session/{id}` also accept an optional `activities[]` array (`{id?, activity_id, values, notes}`) reconciled in the same transaction.
@@ -230,8 +236,9 @@ Key helpers in `crud.py`:
 - **Partner sharing**: Purchases and sessions have `partner_user_id` (FK) + `partner_email` (on purchases) for 2-person package support
 - **Deduplication**: Session visibility uses a subquery (`_user_session_ids`) to return distinct IDs, preventing inflated aggregates from JOIN + OR conditions
 - **ORM safety**: `_annotate_purchases` calls `db.expunge()` before mutating `cost` on partner views to prevent flushing $0 to the database
-- **Config**: `config.py` uses `@lru_cache` for a singleton Settings object from env vars
+- **Config**: `config.py` uses `@lru_cache` for a singleton Settings object from env vars. `BASE_URL` is the sole base-URL setting — it drives both the app redirects **and** the emailed `/invite/confirm` link (`build_confirm_url` falls back to the incoming request host only when `BASE_URL` is unset).
 - **Frontend**: Vanilla JS with Fetch API, Bootstrap modals for forms, Chart.js for reports (3 pie charts: by trainer, by duration, by partner)
+- **First-login onboarding**: `templates/index.html` loads driver.js (pinned, jsDelivr) and, only when `GET /` rendered the `data-onboarding="1"` marker, runs an interactive dashboard tour that opens the Purchase and Log Session modals. On end/close/Esc it POSTs `/api/onboarding/complete`. A "Show tips again" link in `_nav.html` (`/?tour=1`) replays it for already-onboarded users without clearing `onboarded_at`.
 - **Testing**: Pytest with in-memory SQLite, tests in `gym_tracker/tests/` (API tests use `TestClient` + `StaticPool` and override `get_db`/`require_admin`)
 - **Activity reconciliation**: Session create/edit accept a complete `activities[]` array; `gym_tracker/activities.py::reconcile_session_activities` upserts by id, inserts new rows, deletes omitted ones — all without committing, so the caller's single commit keeps the session + activities atomic. Values are validated against the category's active field schema before persistence; `session_activities` cascade-delete with the session.
 
@@ -249,7 +256,7 @@ Key helpers in `crud.py`:
 | `GOOGLE_CLIENT_SECRET` | OAuth client secret |
 | `OAUTH_REDIRECT_URI` | OAuth callback URL |
 | `SESSION_SECRET` | Cookie signing key |
-| `BASE_URL` | Application base URL |
+| `BASE_URL` | Application base URL; also the base for the emailed `/invite/confirm` link (falls back to the incoming request host only when unset). Default `http://localhost:8000` |
 | `DATABASE_URL` | Database connection string |
 | `DEV_LOGIN` | Dev-only: when truthy, enables `GET /dev/login` to auto-login a seeded admin (NEVER set in production) |
 | `EMAIL_ENABLED` | Gate real sending; default `false` -> the confirm URL is logged at INFO and no HTTP call is made |
@@ -257,7 +264,6 @@ Key helpers in `crud.py`:
 | `RESEND_API_KEY` | Resend API key (sending scope); default `""` |
 | `EMAIL_FROM` | `From` header; default `Gym Tracker <admin@gym.x-mas.ro>` |
 | `EMAIL_REPLY_TO` | `Reply-To` header; default `dumitru@x-mas.ro` |
-| `APP_BASE_URL` | Base URL for building the `/invite/confirm` link; default `""` -> derived from the request |
 
 > `ALLOWED_EMAILS` was removed. Login authorization now lives in the `users`
 > table (see Authentication & Authorization §6). A one-off migration
