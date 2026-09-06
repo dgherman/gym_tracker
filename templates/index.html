@@ -8,6 +8,7 @@
     href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
     rel="stylesheet"
   >
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css">
 </head>
 <body class="bg-light">
   {% include "_nav.html" %}
@@ -113,6 +114,7 @@
 
   <!-- Scripts -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js"></script>
   <script>
     window.CURRENT_USER_NAME = {{ ((current_user.full_name or current_user.email) if current_user else 'You') | tojson }};
   </script>
@@ -410,6 +412,94 @@
       refreshSummary();
     });
 
+    // ---------------------------------------------------------------------
+    // First-login onboarding tour (driver.js). Runs only when GET / rendered
+    // the onboarding marker element (new user, or /?tour=1 replay).
+    // Defensive: any missing target is skipped; the tour never blocks the page.
+    // ---------------------------------------------------------------------
+    function startOnboardingTour() {
+      if (!document.querySelector('[data-onboarding="1"]')) return;
+      if (!window.driver || !window.driver.js || !window.driver.js.driver) return;
+
+      const { driver } = window.driver.js;
+      let tour;
+
+      // Resolve once the given Bootstrap modal has finished animating in/out.
+      const afterModal = (id, event, action) => () => {
+        const el = document.getElementById(id);
+        if (!el) { action(); tour.moveNext(); return; }
+        el.addEventListener(event, () => tour.moveNext(), { once: true });
+        action();
+      };
+
+      const rawSteps = [
+        { element: null, popover: {
+            title: 'Welcome to Gym Tracker',
+            description: 'Track training packages you buy and the sessions you use. Here is the 60-second tour.' } },
+        { element: '#buyPackageBtn', popover: {
+            title: 'Purchase a package first',
+            description: 'Buy a block of sessions before you can log any. Click Next to open the purchase form.',
+            side: 'bottom' },
+          onNextClick: afterModal('purchasePackageModal', 'shown.bs.modal', () => purchasePackageModal.show()) },
+        { element: '#purchasePackageSelect', popover: {
+            title: 'Pick a package',
+            description: 'Choose a package, then confirm with the Purchase Package button. Next closes this form.' },
+          onNextClick: afterModal('purchasePackageModal', 'hidden.bs.modal', () => purchasePackageModal.hide()) },
+        { element: '#logSessionBtn', popover: {
+            title: 'Log a session',
+            description: 'Once you own a package, record each session here. Click Next to open the log form.',
+            side: 'bottom' },
+          onNextClick: afterModal('logSessionModal', 'shown.bs.modal', () => logSessionModal.show()) },
+        { element: '#session-datetime', popover: {
+            title: 'Session date & time',
+            description: 'Defaults to now. Change it to log a past session — future times are not allowed.' } },
+        { element: '#sessionPackageSelect', popover: {
+            title: 'Which package',
+            description: 'Pick which purchased block this session draws from.' } },
+        { element: '#modalTrainerSelect', popover: {
+            title: 'Trainer',
+            description: 'Who trained you this session.' } },
+        { element: '#sessionPartnerGroup', popover: {
+            title: 'Solo or shared',
+            description: 'For a 2-person package, name the training partner for this session.' } },
+        { element: '#activitySection', popover: {
+            title: 'Activities (optional)',
+            description: 'Optionally log exercises, sets and reps. Next closes this form.' },
+          onNextClick: afterModal('logSessionModal', 'hidden.bs.modal', () => logSessionModal.hide()) },
+        { element: 'a[href="/reports"]', popover: {
+            title: 'Reports',
+            description: 'Charts of your training volume, spend and progress over time.' } },
+        { element: 'a[href="/history"]', popover: {
+            title: 'History',
+            description: 'Every past session and purchase; edit or review them here.' } },
+        { element: null, popover: {
+            title: "You're set",
+            description: 'Start with Purchase Package, then Log Session. You can reopen this tour from the menu.' } },
+      ];
+
+      // Skip steps whose anchor element is not present on this page.
+      const steps = rawSteps.filter(s => {
+        if (!s.element) return true;
+        if (typeof s.element === 'string') return !!document.querySelector(s.element);
+        return true;
+      });
+
+      let completed = false;
+      const markComplete = () => {
+        if (completed) return;
+        completed = true;
+        fetch('/api/onboarding/complete', { method: 'POST' }).catch(() => {});
+      };
+
+      tour = driver({
+        showProgress: true,
+        allowClose: true,
+        steps,
+        onDestroyed: markComplete,
+      });
+      tour.drive();
+    }
+
     // Initialize on page load
     document.addEventListener('DOMContentLoaded', async () => {
       await loadPackages();
@@ -417,6 +507,7 @@
       await refreshSummary();
       await ActivitySection.load();
       ActivitySection.init();
+      startOnboardingTour();
     });
   </script>
 </body>

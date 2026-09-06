@@ -189,7 +189,7 @@ def _get_onboarded(user_id):
 def test_index_shows_marker_when_never_onboarded(app_client):
     _login(app_client, "ob@x.com")
     body = app_client.get("/").text
-    assert 'data-onboarding="1"' in body
+    assert '<div data-onboarding="1"' in body
 
 
 def test_index_no_marker_once_onboarded(app_client):
@@ -197,7 +197,7 @@ def test_index_no_marker_once_onboarded(app_client):
     _set_onboarded(app_client._ids["user"], datetime(2026, 1, 1, 0, 0, 0))
     _login(app_client, "ob@x.com")
     body = app_client.get("/").text
-    assert 'data-onboarding="1"' not in body
+    assert '<div data-onboarding="1"' not in body
 
 
 def test_index_tour_query_forces_marker_for_onboarded_user(app_client):
@@ -205,7 +205,7 @@ def test_index_tour_query_forces_marker_for_onboarded_user(app_client):
     _set_onboarded(app_client._ids["user"], datetime(2026, 1, 1, 0, 0, 0))
     _login(app_client, "ob@x.com")
     body = app_client.get("/?tour=1").text
-    assert 'data-onboarding="1"' in body
+    assert '<div data-onboarding="1"' in body
 
 
 def test_complete_endpoint_sets_onboarded_at_once_idempotent(app_client):
