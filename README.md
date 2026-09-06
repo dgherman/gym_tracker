@@ -11,6 +11,25 @@ Simple gym sessions tracker
 
 ## Changelog
 
+### 2026-09-06 – First-Login Onboarding Tour, Retroactive Session Dating, BASE_URL Consolidation
+
+- **Guided onboarding tour**: the first login shows an interactive driver.js walkthrough of the dashboard — purchase a package, then log a session field by field (date/time, package, trainer, activities), then Reports and History. New nullable `users.onboarded_at` column (migration `onboard01`, `down_revision = clientmgmt01`) records completion; existing users are backfilled on upgrade so only genuinely new accounts see the tour. Replay anytime via the "Show tips again" menu link or `/?tour=1`. New endpoint `POST /api/onboarding/complete` (login required, idempotent, returns 204) is the only writer of `onboarded_at` — the OAuth callback and `/dev/login` never set it.
+- **Retroactive session date/time**: the Log Session form has a date/time picker defaulting to the current local time, so sessions can be logged for past dates. `POST /sessions/` accepts an optional `session_date` (client sends a UTC ISO string); it is stored as naive UTC. Timestamps more than 5 minutes in the future are rejected with `422` and no row is created.
+- **History / Reports navigation**: the bottom "Back" button moved to the top of both pages and is relabelled "Home" (spaced below the header banner); History's redundant page-local title link was removed.
+- **`APP_BASE_URL` removed**: invite and confirmation links now build from the existing `BASE_URL` setting, falling back to the incoming request host. Remove the `APP_BASE_URL` line from deployment env after upgrading.
+
+### 2026-09-06 – Branch Test Images in CI
+
+- Pushing any non-`main` branch now builds and publishes an `arm64` test image to `ghcr.io/<owner>/gym-tracker-app:branch-<sanitized-ref>` (plus a commit-SHA tag), so a feature branch can be deployed and verified before it is merged. `main` still publishes the multi-arch `latest` and SHA tags unchanged. A non-blocking retention job prunes untagged and older `branch-*` image versions while protecting `latest` and released images.
+
+### 2026-09-05 – Client Management (Admin-Managed Access)
+
+- **Replaced the `ALLOWED_EMAILS` allowlist with an admin-managed invite system.** Admin Console → Client Management (`/admin/clients`, admin only) adds and removes users. Adding a client creates a `pending` account and emails a tokened confirmation link; clicking it (`GET /invite/confirm`) activates the account, after which the user signs in with Google. Removal is a soft disable that revokes login but keeps the user's purchases, sessions, and progress history.
+- Schema (migration `clientmgmt01`, `down_revision = pe01standalone`): `users` gains `status` (`pending`/`active`/`disabled`), `invite_token_hash` (SHA-256 of the raw token; the raw token exists only in the email link), `invited_by_id`, `invited_at`, and `confirmed_at`; `google_sub` is now nullable (a pending invite has none until first login). The migration backfills existing rows to `active`, seeds a row per current `ALLOWED_EMAILS` entry, and aborts without changes if any pre-existing emails collide case-insensitively. Case-insensitive email uniqueness is enforced at the database level and via a fail-closed lookup helper across OAuth login, client creation, partner matching, and `/dev/login`.
+- Admin API (all admin only): `POST /api/admin/clients` (add + send invite), `POST /api/admin/clients/{id}/resend`, `POST /api/admin/clients/{id}/disable`, `POST /api/admin/clients/{id}/reinvite`. Invite tokens do not expire; admins can resend a fresh token or re-invite a disabled user. Concurrent creates resolve to `409`, not `500`.
+- New `gym_tracker/email.py`: outbound email behind a small provider abstraction, with a Resend transport (`RESEND_API_KEY`). With `EMAIL_ENABLED` unset or false (the default for local runs and tests) the confirmation URL is logged instead of sent. Env: `EMAIL_ENABLED`, `EMAIL_PROVIDER`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO`, `BASE_URL`.
+- Deploy code and `alembic upgrade head` together, once; then remove `ALLOWED_EMAILS` from deployment env.
+
 ### 2026-06-12 – Standalone Progress Entries
 
 - **Standalone progress entries**: record activity progress for any past date without a session (Reports → Progress → "+ Add progress"). Admins and trainers can log entries on behalf of other users. New `progress_entries` table (migration `pe01standalone`); entries merge seamlessly into Progress charts.
