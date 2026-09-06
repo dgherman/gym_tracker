@@ -53,6 +53,11 @@ class User(Base):
     invited_at = Column(DateTime, nullable=True)
     confirmed_at = Column(DateTime, nullable=True)
 
+    # First-login onboarding tour: NULL until the user finishes or skips it.
+    # Set ONLY by POST /api/onboarding/complete (never the OAuth callback or
+    # /dev/login). Existing rows are backfilled to now() by the adding migration.
+    onboarded_at = Column(DateTime, nullable=True)
+
     # Audit
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     last_login_at = Column(DateTime, nullable=False, default=datetime.utcnow)
