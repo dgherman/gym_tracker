@@ -63,7 +63,13 @@ def _record_activity(user_id, session_factory=None):
     call, so a monkeypatched recorder that raises is still non-fatal.
     """
     factory = session_factory or SessionLocal
-    now = datetime.utcnow()
+    # Truncate to whole seconds: users.last_seen_at is a plain DATETIME (0
+    # fractional-second precision on MySQL), so a stored value loses its
+    # microseconds. Deriving both `now` and `cutoff` from a whole-second value
+    # keeps the Python arithmetic at the same granularity as MySQL storage, so
+    # the strict `stored < cutoff` comparison guarantees the real gap between
+    # writes is always >= ACTIVITY_THROTTLE (never a few hundred ms under it).
+    now = datetime.utcnow().replace(microsecond=0)
     cutoff = now - ACTIVITY_THROTTLE
     db = factory()
     try:

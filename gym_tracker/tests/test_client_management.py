@@ -776,17 +776,23 @@ def test_migration_adds_and_reverses_last_seen_at(tmp_path, monkeypatch):
     _make_legacy_db(url)
     monkeypatch.setenv("SQLALCHEMY_DATABASE_URL", url)
     monkeypatch.setenv("DATABASE_URL", url)
+    # alembic/env.py builds its engine from get_settings(), which is lru_cached;
+    # clear it so the migration runs against this scratch SQLite DB, not a real
+    # database from a cached settings object.
+    get_settings.cache_clear()
+    try:
+        cfg = Config("alembic.ini")
+        cfg.set_main_option("sqlalchemy.url", url)
+        command.stamp(cfg, "pe01standalone")
+        command.upgrade(cfg, "head")
 
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", url)
-    command.stamp(cfg, "pe01standalone")
-    command.upgrade(cfg, "head")
+        eng = create_engine(url)
+        assert "last_seen_at" in {c["name"] for c in sa_inspect(eng).get_columns("users")}
 
-    eng = create_engine(url)
-    assert "last_seen_at" in {c["name"] for c in sa_inspect(eng).get_columns("users")}
-
-    command.downgrade(cfg, "-1")
-    assert "last_seen_at" not in {c["name"] for c in sa_inspect(eng).get_columns("users")}
+        command.downgrade(cfg, "-1")
+        assert "last_seen_at" not in {c["name"] for c in sa_inspect(eng).get_columns("users")}
+    finally:
+        get_settings.cache_clear()
 
 
 def _last_seen(uid):
@@ -883,3 +889,39 @@ def test_admin_clients_page_last_seen_blank_when_never_seen(admin_client, record
     r = admin_client.get("/admin/clients")
     assert r.status_code == 200
     assert "&mdash;" in r.text or "—" in r.text
+
+
+def test_throttle_boundary_ignores_discarded_microseconds(db_session, monkeypatch):
+    """On MySQL, last_seen_at (plain DATETIME) drops microseconds. _record_activity
+    truncates its clock to whole seconds so the strict `stored < cutoff` gap is
+    always >= 5 min. Simulate the discarded fractional seconds here (SQLite keeps
+    them, so the HTTP-level tests cannot)."""
+    u = models.User(google_sub="tb-sub", email="tb@x.com", role="client", status="active")
+    db_session.add(u)
+    db_session.commit()
+    uid = u.id
+
+    base = datetime(2026, 9, 7, 12, 0, 0)  # whole-second stored value
+    db_session.query(models.User).filter_by(id=uid).update({"last_seen_at": base})
+    db_session.commit()
+
+    class _Frozen(datetime):
+        cur = None
+
+        @classmethod
+        def utcnow(cls):
+            return cls.cur
+
+    monkeypatch.setattr(main, "datetime", _Frozen)
+
+    # Exactly 5 min after base, but with sub-second slop MySQL would discard.
+    # Truncated now -> cutoff == base -> `base < cutoff` is False -> no write.
+    _Frozen.cur = base + timedelta(minutes=5, microseconds=1)
+    main._record_activity(uid, session_factory=TestSessionLocal)
+    assert _last_seen(uid) == base
+
+    # Just past the boundary: truncated now = base + 5min + 1s -> cutoff = base + 1s
+    # -> `base < cutoff` is True -> write happens.
+    _Frozen.cur = base + timedelta(minutes=5, seconds=1, microseconds=500000)
+    main._record_activity(uid, session_factory=TestSessionLocal)
+    assert _last_seen(uid) == base + timedelta(minutes=5, seconds=1)
