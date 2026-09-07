@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -45,12 +45,64 @@ PUBLIC_PATHS = {
     "/dev/login",  # dev-only login bypass (gated by DEV_LOGIN env var; see route)
 }
 
+# At most one real last_seen_at write per user per this interval.
+ACTIVITY_THROTTLE = timedelta(minutes=5)
+
+
+def _record_activity(user_id, session_factory=None):
+    """Bump ``users.last_seen_at`` for ``user_id`` if it is stale or NULL.
+
+    A single atomic conditional UPDATE -- no read-then-write race -- so at most
+    one real write happens per user per ``ACTIVITY_THROTTLE``. Runs on its own
+    short-lived session (``session_factory``, defaulting to the app's
+    ``SessionLocal``; tests patch ``main.SessionLocal`` or pass their own) so it
+    is independent of the request's DB dependency.
+
+    Any failure is swallowed and logged: recording activity must never turn a
+    page into a 500. The caller in ``LoginRequiredMiddleware`` also guards the
+    call, so a monkeypatched recorder that raises is still non-fatal.
+    """
+    factory = session_factory or SessionLocal
+    now = datetime.utcnow()
+    cutoff = now - ACTIVITY_THROTTLE
+    db = factory()
+    try:
+        db.execute(
+            text(
+                "UPDATE users SET last_seen_at = :now "
+                "WHERE id = :uid "
+                "AND (last_seen_at IS NULL OR last_seen_at < :cutoff)"
+            ),
+            {"now": now, "uid": user_id, "cutoff": cutoff},
+        )
+        db.commit()
+    except Exception:  # pragma: no cover - defensive; never fatal to the request
+        logger.warning("last_seen_at update failed for user %s", user_id, exc_info=True)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
 class LoginRequiredMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
+        is_public = path in PUBLIC_PATHS or path.startswith("/static/")
+
+        # Record activity for any authenticated session -- including JSON API
+        # clients -- BEFORE the early-return branches below. Skip unauthenticated
+        # requests and the public bypass paths entirely. Never fatal.
+        user_id = request.session.get("user_id")
+        if user_id and not is_public:
+            try:
+                _record_activity(user_id)
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("last_seen_at recorder raised", exc_info=True)
 
         # Allow public paths and anything under /static
-        if path in PUBLIC_PATHS or path.startswith("/static/"):
+        if is_public:
             return await call_next(request)
 
         # Let API clients that ask for JSON continue (you can add JSON 401 deps if desired)
