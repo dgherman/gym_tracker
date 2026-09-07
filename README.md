@@ -11,6 +11,14 @@ Simple gym sessions tracker
 
 ## Changelog
 
+### 2026-09-07 – Client “Last Seen” Activity Timestamp
+
+- **Admin Client Management now shows a “Last seen” column** (`/admin/clients`, after Invited/Confirmed) with the last time each client made an authenticated request, at date and `HH:MM:SS` precision. The value renders in the viewer's browser-local timezone (`YYYY-MM-DD HH:MM:SS`); a plain `… UTC` string is shown when JavaScript is disabled, and an em dash when the client has not been seen since this shipped.
+- New nullable `users.last_seen_at` column (migration `lastseen01`, `down_revision = onboard01`), stored as naive UTC. No backfill — `NULL` until a user's next authenticated request after upgrade.
+- `LoginRequiredMiddleware` records activity for any request carrying a valid session (including authenticated JSON API calls), and skips unauthenticated requests, `PUBLIC_PATHS`, and `/static/`. Writes are throttled to at most one per user per 5 minutes via a single atomic conditional `UPDATE`, with the clock floored to whole seconds so MySQL's fractional-second-less `DATETIME` cannot shorten the interval. A failure in the activity write is swallowed and logged, and never turns a page into a `500`.
+- Because logged-in sessions are long-lived, `last_seen_at` reflects genuine site activity rather than login time — an active user who never signs out still updates it.
+- Deploy code and `alembic upgrade head` together, once.
+
 ### 2026-09-06 – First-Login Onboarding Tour, Retroactive Session Dating, BASE_URL Consolidation
 
 - **Guided onboarding tour**: the first login shows an interactive driver.js walkthrough of the dashboard — purchase a package, then log a session field by field (date/time, package, trainer, activities), then Reports and History. New nullable `users.onboarded_at` column (migration `onboard01`, `down_revision = clientmgmt01`) records completion; existing users are backfilled on upgrade so only genuinely new accounts see the tour. Replay anytime via the "Show tips again" menu link or `/?tour=1`. New endpoint `POST /api/onboarding/complete` (login required, idempotent, returns 204) is the only writer of `onboarded_at` — the OAuth callback and `/dev/login` never set it.

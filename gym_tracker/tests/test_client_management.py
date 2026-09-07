@@ -1,5 +1,6 @@
 """Client Management feature tests: schema/migration, confirm route, admin API, admin page."""
 import os
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -739,3 +740,188 @@ def test_dev_login_ambiguous_ci_fails_closed(client, db_session):
     r = client.get("/dev/login", headers={"accept": "application/json"}, follow_redirects=False)
     assert r.status_code == 409
     assert db_session.query(models.User).count() == before  # no insert
+
+
+# ---------------------------------------------------------------------------
+# Feature — last_seen_at: schema/migration, middleware throttle, admin column
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def recorder_on_test_db(monkeypatch):
+    """Point LoginRequiredMiddleware's last_seen_at recorder at the in-memory
+    test DB so a request's activity write is observable here.
+
+    NOT autouse: other tests in this module monkeypatch ``Session.commit``
+    globally to simulate races, and the recorder must not consume that
+    one-shot. Only the middleware/admin-page tests below opt in.
+    """
+    monkeypatch.setattr(main, "SessionLocal", TestSessionLocal, raising=False)
+
+
+def test_user_has_last_seen_at_column(db_session):
+    col = models.User.__table__.columns["last_seen_at"]
+    assert col.nullable is True
+    u = models.User(google_sub="ls-sub", email="ls@x.com", role="client", status="active")
+    db_session.add(u)
+    db_session.commit()
+    db_session.refresh(u)
+    assert u.last_seen_at is None
+
+
+def test_migration_adds_and_reverses_last_seen_at(tmp_path, monkeypatch):
+    from alembic import command
+    from alembic.config import Config
+
+    url = f"sqlite:///{tmp_path / 'lastseen.db'}"
+    _make_legacy_db(url)
+    monkeypatch.setenv("SQLALCHEMY_DATABASE_URL", url)
+    monkeypatch.setenv("DATABASE_URL", url)
+    # alembic/env.py builds its engine from get_settings(), which is lru_cached;
+    # clear it so the migration runs against this scratch SQLite DB, not a real
+    # database from a cached settings object.
+    get_settings.cache_clear()
+    try:
+        cfg = Config("alembic.ini")
+        cfg.set_main_option("sqlalchemy.url", url)
+        command.stamp(cfg, "pe01standalone")
+        command.upgrade(cfg, "head")
+
+        eng = create_engine(url)
+        assert "last_seen_at" in {c["name"] for c in sa_inspect(eng).get_columns("users")}
+
+        command.downgrade(cfg, "-1")
+        assert "last_seen_at" not in {c["name"] for c in sa_inspect(eng).get_columns("users")}
+    finally:
+        get_settings.cache_clear()
+
+
+def _last_seen(uid):
+    db = TestSessionLocal()
+    try:
+        return db.get(models.User, uid).last_seen_at
+    finally:
+        db.close()
+
+
+def _set_last_seen(uid, value):
+    db = TestSessionLocal()
+    try:
+        db.get(models.User, uid).last_seen_at = value
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_authenticated_request_sets_last_seen_at(app_client, recorder_on_test_db):
+    _login(app_client, "cli@x.com")
+    uid = app_client._ids["client"]
+    assert _last_seen(uid) is None
+
+    r = app_client.get("/", follow_redirects=False)
+    assert r.status_code in (200, 302, 303, 307), r.text
+    assert _last_seen(uid) is not None
+
+
+def test_authenticated_json_api_request_records_activity(app_client, recorder_on_test_db):
+    _login(app_client, "cli@x.com")
+    uid = app_client._ids["client"]
+    r = app_client.get("/api/trainers/", headers={"accept": "application/json"})
+    assert r.status_code == 200
+    assert _last_seen(uid) is not None
+
+
+def test_second_request_within_window_does_not_change_last_seen_at(app_client, recorder_on_test_db):
+    _login(app_client, "cli@x.com")
+    uid = app_client._ids["client"]
+    app_client.get("/", follow_redirects=False)
+    first = _last_seen(uid)
+    assert first is not None
+
+    app_client.get("/", follow_redirects=False)
+    assert _last_seen(uid) == first
+
+
+def test_stale_last_seen_at_is_refreshed(app_client, recorder_on_test_db):
+    _login(app_client, "cli@x.com")
+    uid = app_client._ids["client"]
+    old = datetime.utcnow() - timedelta(hours=1)
+    _set_last_seen(uid, old)
+
+    app_client.get("/", follow_redirects=False)
+    assert _last_seen(uid) > old
+
+
+def test_unauthenticated_request_records_nothing(app_client, recorder_on_test_db):
+    uid = app_client._ids["client"]
+    r = app_client.get("/", follow_redirects=False)
+    assert r.status_code in (302, 303, 307)  # redirect to /login
+    assert _last_seen(uid) is None
+
+
+def test_recorder_error_does_not_break_response(app_client, recorder_on_test_db, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("db is down")
+
+    monkeypatch.setattr(main, "_record_activity", boom)
+    _login(app_client, "cli@x.com")
+    r = app_client.get("/", follow_redirects=False)
+    assert r.status_code in (200, 302, 303, 307), r.text
+
+
+def test_admin_clients_page_shows_last_seen_header(admin_client, recorder_on_test_db):
+    r = admin_client.get("/admin/clients")
+    assert r.status_code == 200
+    assert "Last seen" in r.text
+
+
+def test_admin_clients_page_renders_last_seen_value(admin_client, recorder_on_test_db):
+    uid = admin_client._ids["client"]
+    _set_last_seen(uid, datetime(2026, 9, 7, 12, 34, 56))
+    r = admin_client.get("/admin/clients")
+    assert r.status_code == 200
+    assert 'class="local-datetime"' in r.text
+    assert "2026-09-07T12:34:56Z" in r.text
+
+
+def test_admin_clients_page_last_seen_blank_when_never_seen(admin_client, recorder_on_test_db):
+    uid = admin_client._ids["client"]
+    _set_last_seen(uid, None)
+    r = admin_client.get("/admin/clients")
+    assert r.status_code == 200
+    assert "&mdash;" in r.text or "—" in r.text
+
+
+def test_throttle_boundary_ignores_discarded_microseconds(db_session, monkeypatch):
+    """On MySQL, last_seen_at (plain DATETIME) drops microseconds. _record_activity
+    truncates its clock to whole seconds so the strict `stored < cutoff` gap is
+    always >= 5 min. Simulate the discarded fractional seconds here (SQLite keeps
+    them, so the HTTP-level tests cannot)."""
+    u = models.User(google_sub="tb-sub", email="tb@x.com", role="client", status="active")
+    db_session.add(u)
+    db_session.commit()
+    uid = u.id
+
+    base = datetime(2026, 9, 7, 12, 0, 0)  # whole-second stored value
+    db_session.query(models.User).filter_by(id=uid).update({"last_seen_at": base})
+    db_session.commit()
+
+    class _Frozen(datetime):
+        cur = None
+
+        @classmethod
+        def utcnow(cls):
+            return cls.cur
+
+    monkeypatch.setattr(main, "datetime", _Frozen)
+
+    # Exactly 5 min after base, but with sub-second slop MySQL would discard.
+    # Truncated now -> cutoff == base -> `base < cutoff` is False -> no write.
+    _Frozen.cur = base + timedelta(minutes=5, microseconds=1)
+    main._record_activity(uid, session_factory=TestSessionLocal)
+    assert _last_seen(uid) == base
+
+    # Just past the boundary: truncated now = base + 5min + 1s -> cutoff = base + 1s
+    # -> `base < cutoff` is True -> write happens.
+    _Frozen.cur = base + timedelta(minutes=5, seconds=1, microseconds=500000)
+    main._record_activity(uid, session_factory=TestSessionLocal)
+    assert _last_seen(uid) == base + timedelta(minutes=5, seconds=1)

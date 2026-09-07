@@ -75,6 +75,7 @@
                     <th>Status</th>
                     <th>Invited</th>
                     <th>Confirmed</th>
+                    <th>Last seen</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -94,6 +95,14 @@
                     </td>
                     <td>{{ c.invited_at.strftime('%Y-%m-%d') if c.invited_at else "" }}</td>
                     <td>{{ c.confirmed_at.strftime('%Y-%m-%d') if c.confirmed_at else "" }}</td>
+                    <td>
+                      {% if c.last_seen_at %}
+                        <span class="local-datetime"
+                              data-utc="{{ c.last_seen_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ c.last_seen_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC</span>
+                      {% else %}
+                        <span class="text-muted">&mdash;</span>
+                      {% endif %}
+                    </td>
                     <td>
                       {% if c.status == "pending" %}
                         <button class="btn btn-sm btn-outline-primary"
@@ -119,6 +128,23 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script>
+    // Rewrite each `.local-datetime` span from its `data-utc` value (ISO-8601
+    // with an explicit `Z`) to the viewer's browser-local time, formatted
+    // `YYYY-MM-DD HH:MM:SS`. No-JS clients keep the plain "... UTC" text that
+    // is already in the span.
+    (function () {
+      function pad(n) { return String(n).padStart(2, '0'); }
+      document.querySelectorAll('.local-datetime').forEach(function (el) {
+        var raw = el.getAttribute('data-utc');
+        if (!raw) return;
+        var d = new Date(raw);
+        if (isNaN(d.getTime())) return;
+        el.textContent =
+          d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+          ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+      });
+    })();
+
     function showNotification(message, type) {
       // Build the alert via the DOM so `message` (which can carry an email
       // address or a server-supplied warning/detail string) is inserted as
