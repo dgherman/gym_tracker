@@ -61,6 +61,11 @@ class User(Base):
     # Audit
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     last_login_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    # Last time this user made an authenticated request. NULL until they are
+    # first seen after this column shipped. Maintained by LoginRequiredMiddleware
+    # (see main._record_activity), throttled to one write per user per 5 minutes.
+    # Naive UTC (datetime.utcnow), matching invited_at / confirmed_at / last_login_at.
+    last_seen_at = Column(DateTime, nullable=True)
 
     # Backrefs for convenience (purely optional)
     logged_purchases = relationship("Purchase", foreign_keys="[Purchase.logged_by_user_id]", back_populates="logged_by_user")
