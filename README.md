@@ -10,6 +10,9 @@ Simple gym sessions tracker
 - **Admin Tools**: Manage trainers, packages, and the activity library (categories, metric fields, deactivation).
 
 ## Changelog
+### 2026-11-20 - Weekly image rebuild
+- CI now also runs every Monday (and on demand) and rebuilds `gym-tracker-app:latest` from `main` with a freshly pulled `python:3.11-slim` base, so OS security patches reach the image without a code change.
+
 
 ### 2026-09-07 – Client “Last Seen” Activity Timestamp
 
